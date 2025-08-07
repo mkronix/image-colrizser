@@ -1,11 +1,11 @@
 
 import React from 'react';
 import { Button } from '@/components/ui/button';
-import { Pen, Palette, MousePointer, Upload, Download, Eye, EyeOff } from 'lucide-react';
+import { Pen, Palette, MousePointer, Upload, Download, Eye, EyeOff, Square, Polygon } from 'lucide-react';
 
 interface ToolbarProps {
-  currentTool: 'pen' | 'fill' | 'select';
-  onToolChange: (tool: 'pen' | 'fill' | 'select') => void;
+  currentTool: 'pen' | 'fill' | 'select' | 'rectangle' | 'polygon';
+  onToolChange: (tool: 'pen' | 'fill' | 'select' | 'rectangle' | 'polygon') => void;
   onImageUpload: (file: File) => void;
   onExport: () => void;
   showOutlines: boolean;
@@ -29,6 +29,8 @@ const Toolbar: React.FC<ToolbarProps> = ({
 
   const tools = [
     { id: 'pen' as const, icon: Pen, label: 'Draw Outline' },
+    { id: 'rectangle' as const, icon: Square, label: 'Rectangle' },
+    { id: 'polygon' as const, icon: Polygon, label: 'Polygon' },
     { id: 'fill' as const, icon: Palette, label: 'Fill Color' },
     { id: 'select' as const, icon: MousePointer, label: 'Select Region' }
   ];

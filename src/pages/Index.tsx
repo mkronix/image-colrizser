@@ -1,4 +1,3 @@
-
 import React, { useState, useCallback, useRef } from 'react';
 import Header from '@/components/Header';
 import Toolbar from '@/components/Toolbar';
@@ -13,17 +12,17 @@ interface Region {
   color?: string;
   texture?: string;
   filled: boolean;
+  type: 'freehand' | 'rectangle' | 'polygon';
 }
 
 const Index = () => {
   const [image, setImage] = useState<HTMLImageElement | null>(null);
-  const [currentTool, setCurrentTool] = useState<'pen' | 'fill' | 'select'>('pen');
+  const [currentTool, setCurrentTool] = useState<'pen' | 'fill' | 'select' | 'rectangle' | 'polygon'>('pen');
   const [selectedColor, setSelectedColor] = useState('#ff6b6b');
   const [regions, setRegions] = useState<Region[]>([]);
   const [selectedRegion, setSelectedRegion] = useState<Region | null>(null);
   const [showColorPicker, setShowColorPicker] = useState(false);
   const [showOutlines, setShowOutlines] = useState(true);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
 
   const handleImageUpload = useCallback((file: File) => {
     const img = new Image();
@@ -88,23 +87,41 @@ const Index = () => {
     // Draw original image
     ctx.drawImage(image, 0, 0);
 
-    // Draw filled regions without outlines
+    // Draw filled regions with improved blending (without outlines)
     regions.forEach(region => {
-      if (region.filled && region.points.length > 0) {
+      if (region.filled && region.points.length > 0 && region.color) {
+        ctx.save();
+        
+        // Create clipping path
         ctx.beginPath();
-        ctx.moveTo(region.points[0].x, region.points[0].y);
-        region.points.slice(1).forEach(point => {
-          ctx.lineTo(point.x, point.y);
-        });
-        ctx.closePath();
-
-        if (region.color) {
-          ctx.fillStyle = region.color;
+        if (region.type === 'rectangle' && region.points.length >= 2) {
+          const [start, end] = region.points;
+          ctx.rect(start.x, start.y, end.x - start.x, end.y - start.y);
+        } else {
+          ctx.moveTo(region.points[0].x, region.points[0].y);
+          region.points.slice(1).forEach(point => {
+            ctx.lineTo(point.x, point.y);
+          });
+          ctx.closePath();
         }
+        
+        ctx.clip();
 
-        ctx.globalCompositeOperation = 'source-atop';
-        ctx.fill();
-        ctx.globalCompositeOperation = 'source-over';
+        // Apply color with better blending
+        const color = region.color;
+        const r = parseInt(color.slice(1, 3), 16);
+        const g = parseInt(color.slice(3, 5), 16);
+        const b = parseInt(color.slice(5, 7), 16);
+        
+        ctx.globalCompositeOperation = 'multiply';
+        ctx.fillStyle = `rgba(${r}, ${g}, ${b}, 0.7)`;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        
+        ctx.globalCompositeOperation = 'overlay';
+        ctx.fillStyle = `rgba(${r}, ${g}, ${b}, 0.3)`;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        ctx.restore();
       }
     });
 
