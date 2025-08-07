@@ -80,7 +80,7 @@ const ImageCanvas: React.FC<ImageCanvasProps> = ({
       if (region.filled && region.points.length > 0 && region.color) {
         console.log('Drawing filled region:', region.id, 'with color:', region.color);
         ctx.save();
-        
+
         // Create clipping path for the region
         ctx.beginPath();
         if (region.type === 'rectangle' && region.points.length >= 2) {
@@ -93,7 +93,7 @@ const ImageCanvas: React.FC<ImageCanvasProps> = ({
           });
           ctx.closePath();
         }
-        
+
         ctx.clip();
 
         // Create a semi-transparent overlay for better blending
@@ -102,12 +102,12 @@ const ImageCanvas: React.FC<ImageCanvasProps> = ({
         const r = parseInt(color.slice(1, 3), 16);
         const g = parseInt(color.slice(3, 5), 16);
         const b = parseInt(color.slice(5, 7), 16);
-        
+
         // Apply color with multiply blend mode for better integration
         ctx.globalCompositeOperation = 'multiply';
         ctx.fillStyle = `rgba(${r}, ${g}, ${b}, 0.7)`;
         ctx.fillRect(0, 0, canvas.width, canvas.height);
-        
+
         // Add a subtle color overlay
         ctx.globalCompositeOperation = 'overlay';
         ctx.fillStyle = `rgba(${r}, ${g}, ${b}, 0.3)`;
@@ -124,7 +124,7 @@ const ImageCanvas: React.FC<ImageCanvasProps> = ({
           ctx.beginPath();
           ctx.strokeStyle = region.outlineColor || '#60a5fa';
           ctx.lineWidth = 2;
-          
+
           if (region.type === 'rectangle' && region.points.length >= 2) {
             const [start, end] = region.points;
             ctx.rect(start.x, start.y, end.x - start.x, end.y - start.y);
@@ -322,55 +322,53 @@ const ImageCanvas: React.FC<ImageCanvasProps> = ({
   if (!image) {
     return (
       <div className="flex-1 flex items-center justify-center p-4">
-        <div className="text-center glass-panel rounded-2xl p-8 max-w-md animate-fade-in">
-          <div className="text-6xl mb-4">🎨</div>
-          <h2 className="text-2xl font-bold mb-2">Welcome to ColorStudio Pro</h2>
-          <p className="text-muted-foreground mb-4">
+        <div className="text-center bg-zinc-900 border border-zinc-700 rounded-2xl p-6 sm:p-8 max-w-md animate-fade-in">
+          <div className="text-4xl sm:text-6xl mb-4">🎨</div>
+          <h2 className="text-xl sm:text-2xl font-bold mb-2 text-white">Welcome to ColorStudio Pro</h2>
+          <p className="text-zinc-400 mb-4 text-sm sm:text-base">
             Upload an image to start creating beautiful colorized artwork
           </p>
-          <div className="text-sm text-muted-foreground">
-            <div className="flex items-center justify-center gap-2 mb-2">
-              <span className="w-2 h-2 bg-primary rounded-full"></span>
+          <div className="text-sm text-zinc-400 space-y-2">
+            <div className="flex items-center justify-center gap-2">
+              <span className="w-2 h-2 bg-zinc-500 rounded-full"></span>
               <span>Upload your image</span>
             </div>
-            <div className="flex items-center justify-center gap-2 mb-2">
-              <span className="w-2 h-2 bg-accent-electric rounded-full"></span>
+            <div className="flex items-center justify-center gap-2">
+              <span className="w-2 h-2 bg-zinc-400 rounded-full"></span>
               <span>Outline different regions</span>
             </div>
-            <div className="flex items-center justify-center gap-2 mb-2">
-              <span className="w-2 h-2 bg-accent-neon rounded-full"></span>
+            <div className="flex items-center justify-center gap-2">
+              <span className="w-2 h-2 bg-zinc-300 rounded-full"></span>
               <span>Fill with colors</span>
             </div>
             <div className="flex items-center justify-center gap-2">
-              <span className="w-2 h-2 bg-muted rounded-full"></span>
+              <span className="w-2 h-2 bg-zinc-200 rounded-full"></span>
               <span>Export your masterpiece</span>
             </div>
           </div>
         </div>
       </div>
-    )
+    );
   }
 
   return (
-    <div className="flex-1 flex items-center justify-center p-4">
-      <div className="relative">
-        <canvas
-          ref={canvasRef}
-          width={canvasSize.width}
-          height={canvasSize.height}
-          onMouseDown={handleMouseDown}
-          onMouseMove={handleMouseMove}
-          onMouseUp={handleMouseUp}
-          onDoubleClick={handleDoubleClick}
-          className="border border-border rounded-lg cursor-crosshair bg-surface shadow-2xl"
-          style={{ maxWidth: '100%', height: 'auto' }}
-        />
-        {currentTool === 'polygon' && isDrawing && (
-          <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 bg-background/90 px-3 py-1 rounded-lg text-sm">
-            Double-click to finish polygon
-          </div>
-        )}
-      </div>
+    <div className=" relative w-full flex justify-center items-center">
+      <canvas
+        ref={canvasRef}
+        width={canvasSize.width}
+        height={canvasSize.height}
+        onMouseDown={handleMouseDown}
+        onMouseMove={handleMouseMove}
+        onMouseUp={handleMouseUp}
+        onDoubleClick={handleDoubleClick}
+        className="border border-zinc-700 rounded-lg cursor-crosshair bg-zinc-800"
+        style={{ maxWidth: '100%', height: 'auto' }}
+      />
+      {currentTool === 'polygon' && isDrawing && (
+        <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 bg-zinc-900/90 px-3 py-1 rounded-lg text-sm border border-zinc-700 text-white">
+          Double-click to finish polygon
+        </div>
+      )}
     </div>
   );
 };

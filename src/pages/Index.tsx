@@ -1,14 +1,12 @@
 
-import React, { useState, useCallback, useRef, useEffect } from 'react';
-import Header from '@/components/Header';
-import Toolbar from '@/components/Toolbar';
-import ImageCanvas from '@/components/ImageCanvas';
-import ColorPicker from '@/components/ColorPicker';
 import ColorPickerDrawer from '@/components/ColorPickerDrawer';
+import Header from '@/components/Header';
+import ImageCanvas from '@/components/ImageCanvas';
 import OutlineColorDialog from '@/components/OutlineColorDialog';
 import RegionPanel from '@/components/RegionPanel';
+import Toolbar from '@/components/Toolbar';
 import { useHistory } from '@/hooks/useHistory';
-import { toast } from 'sonner';
+import { useCallback, useEffect, useState } from 'react';
 
 interface Region {
   id: string;
@@ -27,11 +25,10 @@ const Index = () => {
   const [selectedOutlineColor, setSelectedOutlineColor] = useState('#3b82f6');
   const [selectedRegion, setSelectedRegion] = useState<Region | null>(null);
   const [showColorPicker, setShowColorPicker] = useState(false);
-  const [showColorDrawer, setShowColorDrawer] = useState(false);
   const [showOutlineDialog, setShowOutlineDialog] = useState(false);
   const [showOutlines, setShowOutlines] = useState(true);
+  const [regionPanelOpen, setRegionPanelOpen] = useState(false);
 
-  // Use history hook for undo/redo functionality
   const {
     state: regions,
     canUndo,
@@ -42,22 +39,16 @@ const Index = () => {
     reset
   } = useHistory<Region[]>([], 12);
 
-  // Add keyboard shortcuts for undo/redo
+  // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.ctrlKey || e.metaKey) {
         if (e.key === 'z' && !e.shiftKey) {
           e.preventDefault();
-          if (canUndo) {
-            undo();
-            toast.success('Undone');
-          }
+          if (canUndo) undo();
         } else if ((e.key === 'y') || (e.key === 'z' && e.shiftKey)) {
           e.preventDefault();
-          if (canRedo) {
-            redo();
-            toast.success('Redone');
-          }
+          if (canRedo) redo();
         }
       }
     };
@@ -70,54 +61,34 @@ const Index = () => {
     const img = new Image();
     img.onload = () => {
       setImage(img);
-      reset([]); // Clear existing regions and history
+      reset([]);
       setSelectedRegion(null);
-      toast.success('Image uploaded successfully!');
     };
     img.src = URL.createObjectURL(file);
   }, [reset]);
 
-  const handleToolChange = useCallback((tool: 'pen' | 'fill' | 'select' | 'rectangle' | 'polygon') => {
-    if (tool === 'fill') {
-      setShowColorDrawer(true);
-    } else if (['pen', 'rectangle', 'polygon'].includes(tool)) {
-      setShowOutlineDialog(true);
-    }
-    setCurrentTool(tool);
-  }, []);
-
   const handleRegionCreated = useCallback((region: Region) => {
     const existingIndex = regions.findIndex(r => r.id === region.id);
     let newRegions: Region[];
-    
+
     if (existingIndex >= 0) {
-      // Update existing region
       newRegions = [...regions];
       newRegions[existingIndex] = region;
     } else {
-      // Add new region
       newRegions = [...regions, region];
     }
-    
-    pushToHistory(newRegions);
 
-    if (!region.filled) {
-      toast.success('Region outlined! Use fill tool to colorize.');
-    }
+    pushToHistory(newRegions);
   }, [regions, pushToHistory]);
 
   const handleRegionSelected = useCallback((region: Region | null) => {
     setSelectedRegion(region);
-    if (region) {
-      toast.info(`Selected Region ${regions.findIndex(r => r.id === region.id) + 1}`);
-    }
-  }, [regions]);
+  }, []);
 
   const handleRegionDelete = useCallback((regionId: string) => {
     const newRegions = regions.filter(r => r.id !== regionId);
     pushToHistory(newRegions);
     setSelectedRegion(prev => prev?.id === regionId ? null : prev);
-    toast.success('Region deleted');
   }, [regions, pushToHistory]);
 
   const handleColorChange = useCallback((regionId: string, color: string) => {
@@ -132,23 +103,17 @@ const Index = () => {
   const handleExport = useCallback(() => {
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d');
-    if (!ctx || !image) {
-      toast.error('No image to export');
-      return;
-    }
+    if (!ctx || !image) return;
 
     canvas.width = image.width;
     canvas.height = image.height;
 
-    // Draw original image
     ctx.drawImage(image, 0, 0);
 
-    // Draw filled regions with improved blending (without outlines)
     regions.forEach(region => {
       if (region.filled && region.points.length > 0 && region.color) {
         ctx.save();
-        
-        // Create clipping path
+
         ctx.beginPath();
         if (region.type === 'rectangle' && region.points.length >= 2) {
           const [start, end] = region.points;
@@ -160,19 +125,18 @@ const Index = () => {
           });
           ctx.closePath();
         }
-        
+
         ctx.clip();
 
-        // Apply color with better blending
         const color = region.color;
         const r = parseInt(color.slice(1, 3), 16);
         const g = parseInt(color.slice(3, 5), 16);
         const b = parseInt(color.slice(5, 7), 16);
-        
+
         ctx.globalCompositeOperation = 'multiply';
         ctx.fillStyle = `rgba(${r}, ${g}, ${b}, 0.7)`;
         ctx.fillRect(0, 0, canvas.width, canvas.height);
-        
+
         ctx.globalCompositeOperation = 'overlay';
         ctx.fillStyle = `rgba(${r}, ${g}, ${b}, 0.3)`;
         ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -181,7 +145,6 @@ const Index = () => {
       }
     });
 
-    // Export as PNG
     canvas.toBlob((blob) => {
       if (blob) {
         const url = URL.createObjectURL(blob);
@@ -190,65 +153,83 @@ const Index = () => {
         a.download = `colorized-image-${Date.now()}.png`;
         a.click();
         URL.revokeObjectURL(url);
-        toast.success('Image exported successfully!');
       }
     }, 'image/png');
   }, [image, regions]);
 
   return (
-    <div className="h-screen p-2">
-      <div className="">
-        <Header />
+    <div className="min-h-screen bg-zinc-950 text-white">
+      <div className="p-2 lg:p-4">
+        {/* fixed header */}
+        <div className={`${!image ? '' : 'max-lg:hidden'} fixed w-full top-0 left-0 z-40`}>
+          <Header />
+        </div>
 
-        <div className="flex gap-6 h-[calc(100vh-8rem)]">
-          {/* Left Toolbar */}
-          <Toolbar
+        {/* a main container */}
+        <div className="pt-[70px]">
+          <ImageCanvas
+            image={image}
             currentTool={currentTool}
-            onToolChange={handleToolChange}
-            onImageUpload={handleImageUpload}
-            onExport={handleExport}
+            selectedColor={selectedColor}
+            selectedOutlineColor={selectedOutlineColor}
+            onRegionCreated={handleRegionCreated}
+            onRegionSelected={handleRegionSelected}
+            regions={regions}
             showOutlines={showOutlines}
-            onToggleOutlines={() => setShowOutlines(!showOutlines)}
-            canUndo={canUndo}
-            canRedo={canRedo}
-            onUndo={undo}
-            onRedo={redo}
           />
 
-          {/* Main Canvas Area */}
-          <div className="flex-1 flex flex-col relative">
-            <ImageCanvas
-              image={image}
-              currentTool={currentTool}
-              selectedColor={selectedColor}
-              selectedOutlineColor={selectedOutlineColor}
-              onRegionCreated={handleRegionCreated}
-              onRegionSelected={handleRegionSelected}
+          {/* Right Panel - Hidden on mobile initially */}
+          <div className="hidden lg:block">
+            <RegionPanel
               regions={regions}
-              showOutlines={showOutlines}
+              selectedRegion={selectedRegion}
+              onRegionSelect={handleRegionSelected}
+              onRegionDelete={handleRegionDelete}
+              onColorChange={handleColorChange}
+              isOpen={regionPanelOpen}
+              onToggle={() => setRegionPanelOpen(!regionPanelOpen)}
             />
           </div>
 
-          {/* Right Panel */}
-          <RegionPanel
-            regions={regions}
-            selectedRegion={selectedRegion}
-            onRegionSelect={handleRegionSelected}
-            onRegionDelete={handleRegionDelete}
-            onColorChange={handleColorChange}
-          />
+          {/* Mobile Region Panel */}
+          <div className="lg:hidden">
+            <RegionPanel
+              regions={regions}
+              selectedRegion={selectedRegion}
+              onRegionSelect={handleRegionSelected}
+              onRegionDelete={handleRegionDelete}
+              onColorChange={handleColorChange}
+              isOpen={regionPanelOpen}
+              onToggle={() => setRegionPanelOpen(!regionPanelOpen)}
+            />
+          </div>
         </div>
       </div>
 
-      {/* Color Picker Drawer */}
+      {/* fixed Toolbar */}
+      <Toolbar
+        currentTool={currentTool}
+        onToolChange={setCurrentTool}
+        onImageUpload={handleImageUpload}
+        onExport={handleExport}
+        showOutlines={showOutlines}
+        onToggleOutlines={() => setShowOutlines(!showOutlines)}
+        canUndo={canUndo}
+        canRedo={canRedo}
+        onUndo={undo}
+        onRedo={redo}
+        onOpenColorPicker={() => setShowColorPicker(true)}
+        onOpenOutlineDialog={() => setShowOutlineDialog(true)}
+      />
+
+      {/* Modals */}
       <ColorPickerDrawer
-        isOpen={showColorDrawer}
-        onClose={() => setShowColorDrawer(false)}
+        isOpen={showColorPicker}
+        onClose={() => setShowColorPicker(false)}
         selectedColor={selectedColor}
         onColorSelect={setSelectedColor}
       />
 
-      {/* Outline Color Dialog */}
       <OutlineColorDialog
         isOpen={showOutlineDialog}
         onClose={() => setShowOutlineDialog(false)}
