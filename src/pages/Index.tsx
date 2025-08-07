@@ -1,4 +1,3 @@
-
 import ColorPickerDrawer from '@/components/ColorPickerDrawer';
 import Header from '@/components/Header';
 import ImageCanvas from '@/components/ImageCanvas';
@@ -7,6 +6,15 @@ import RegionPanel from '@/components/RegionPanel';
 import Toolbar from '@/components/Toolbar';
 import { useHistory } from '@/hooks/useHistory';
 import { useCallback, useEffect, useState } from 'react';
+import { Button } from '@/components/ui/button';
+import { Bot, Sparkles, Zap } from 'lucide-react';
+import { toast } from '@/hooks/use-toast';
+import AIEdgeDetection from '@/components/AIEdgeDetection';
+import AIOutlineOptimizer from '@/components/AIOutlineOptimizer';
+
+// Import AI Components (these would be in separate files)
+// import AIEdgeDetection from '@/components/AIEdgeDetection';
+// import AIOutlineOptimizer from '@/components/AIOutlineOptimizer';
 
 interface Region {
   id: string;
@@ -28,6 +36,12 @@ const Index = () => {
   const [showOutlineDialog, setShowOutlineDialog] = useState(false);
   const [showOutlines, setShowOutlines] = useState(true);
   const [regionPanelOpen, setRegionPanelOpen] = useState(false);
+
+  // AI Feature States
+  const [showAIEdgeDetection, setShowAIEdgeDetection] = useState(false);
+  const [showAIOptimizer, setShowAIOptimizer] = useState(false);
+  const [showOptimizationPrompt, setShowOptimizationPrompt] = useState(false);
+  const [lastCreatedRegion, setLastCreatedRegion] = useState<Region | null>(null);
 
   const {
     state: regions,
@@ -63,6 +77,24 @@ const Index = () => {
       setImage(img);
       reset([]);
       setSelectedRegion(null);
+
+      // Show AI detection suggestion
+      setTimeout(() => {
+        toast({
+          title: "🤖 AI Assistant Ready!",
+          description: "Want me to automatically detect edges and regions in your image?",
+          action: (
+            <Button
+              size="sm"
+              onClick={() => setShowAIEdgeDetection(true)}
+              className="bg-gradient-to-r from-green-600 to-blue-600"
+            >
+              <Bot className="h-3 w-3 mr-1" />
+              Try AI Detection
+            </Button>
+          ),
+        });
+      }, 1000);
     };
     img.src = URL.createObjectURL(file);
   }, [reset]);
@@ -76,6 +108,14 @@ const Index = () => {
       newRegions[existingIndex] = region;
     } else {
       newRegions = [...regions, region];
+      setLastCreatedRegion(region);
+
+      // Show AI optimization suggestion for manual drawings
+      if (region.type === 'freehand' && region.points.length > 10) {
+        setTimeout(() => {
+          setShowOptimizationPrompt(true);
+        }, 500);
+      }
     }
 
     pushToHistory(newRegions);
@@ -100,14 +140,32 @@ const Index = () => {
     pushToHistory(newRegions);
   }, [regions, pushToHistory]);
 
+  // AI Edge Detection Handler
+  const handleAIRegionsDetected = useCallback((detectedRegions: Region[]) => {
+    const newRegions = [...regions, ...detectedRegions];
+    pushToHistory(newRegions);
+  }, [regions, pushToHistory]);
+
+  // AI Optimization Handler
+  const handleOptimizationApplied = useCallback((optimizedRegion: Region) => {
+    const newRegions = regions.map(region =>
+      region.id === optimizedRegion.id ? optimizedRegion : region
+    );
+    pushToHistory(newRegions);
+    setLastCreatedRegion(null);
+    setShowOptimizationPrompt(false);
+  }, [regions, pushToHistory]);
+
   const handleExport = useCallback(() => {
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d');
     if (!ctx || !image) return;
 
-    canvas.width = image.width;
-    canvas.height = image.height;
+    canvas.width = image.width * 2; // 2x resolution for better quality
+    canvas.height = image.height * 2;
 
+    // Scale context for high resolution
+    ctx.scale(2, 2);
     ctx.drawImage(image, 0, 0);
 
     regions.forEach(region => {
@@ -135,11 +193,11 @@ const Index = () => {
 
         ctx.globalCompositeOperation = 'multiply';
         ctx.fillStyle = `rgba(${r}, ${g}, ${b}, 0.7)`;
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.fillRect(0, 0, image.width, image.height);
 
         ctx.globalCompositeOperation = 'overlay';
         ctx.fillStyle = `rgba(${r}, ${g}, ${b}, 0.3)`;
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.fillRect(0, 0, image.width, image.height);
 
         ctx.restore();
       }
@@ -150,9 +208,14 @@ const Index = () => {
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `colorized-image-${Date.now()}.png`;
+        a.download = `colorized-masterpiece-${Date.now()}.png`;
         a.click();
         URL.revokeObjectURL(url);
+
+        toast({
+          title: "🎨 Export Successful!",
+          description: "Your colorized artwork has been downloaded in high resolution",
+        });
       }
     }, 'image/png');
   }, [image, regions]);
@@ -160,12 +223,54 @@ const Index = () => {
   return (
     <div className="min-h-screen bg-zinc-950 text-white">
       <div className="p-2 lg:p-4">
-        {/* fixed header */}
+        {/* Fixed header */}
         <div className={`${!image ? '' : 'max-lg:hidden'} fixed w-full top-0 left-0 z-40`}>
           <Header />
         </div>
 
-        {/* a main container */}
+        {/* AI Quick Actions Bar - Only show when image is loaded */}
+        {image && (
+          <div className="fixed top-20 left-4 right-4 lg:left-24 lg:right-80 z-30 flex justify-center">
+            <div className="bg-zinc-900/95 backdrop-blur-sm border border-zinc-700 rounded-2xl p-2 shadow-2xl">
+              <div className="flex gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setShowAIEdgeDetection(true)}
+                  className="border-green-600/50 text-green-400 hover:bg-green-600/10 hover:border-green-500"
+                >
+                  <Bot className="h-3 w-3 mr-1" />
+                  AI Detect
+                </Button>
+
+                {selectedRegion && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setShowAIOptimizer(true)}
+                    className="border-blue-600/50 text-blue-400 hover:bg-blue-600/10 hover:border-blue-500"
+                  >
+                    <Sparkles className="h-3 w-3 mr-1" />
+                    AI Optimize
+                  </Button>
+                )}
+
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={handleExport}
+                  disabled={!regions.some(r => r.filled)}
+                  className="border-purple-600/50 text-purple-400 hover:bg-purple-600/10 hover:border-purple-500"
+                >
+                  <Zap className="h-3 w-3 mr-1" />
+                  Export HD
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Main container */}
         <div className="pt-[70px]">
           <ImageCanvas
             image={image}
@@ -206,7 +311,7 @@ const Index = () => {
         </div>
       </div>
 
-      {/* fixed Toolbar */}
+      {/* Fixed Toolbar */}
       <Toolbar
         currentTool={currentTool}
         onToolChange={setCurrentTool}
@@ -222,6 +327,43 @@ const Index = () => {
         onOpenOutlineDialog={() => setShowOutlineDialog(true)}
       />
 
+      {/* AI Optimization Prompt Toast */}
+      {showOptimizationPrompt && lastCreatedRegion && (
+        <div className="fixed bottom-24 left-4 right-4 lg:left-24 lg:right-80 z-50 flex justify-center">
+          <div className="bg-gradient-to-r from-blue-900/95 to-purple-900/95 backdrop-blur-sm border border-blue-600/50 rounded-2xl p-4 shadow-2xl max-w-md">
+            <div className="flex items-start gap-3">
+              <Bot className="h-5 w-5 text-blue-400 mt-0.5" />
+              <div className="flex-1">
+                <h3 className="text-sm font-semibold text-white mb-1">AI Optimization Available</h3>
+                <p className="text-xs text-blue-200 mb-3">I can improve your outline by smoothing lines and optimizing shape</p>
+                <div className="flex gap-2">
+                  <Button
+                    size="sm"
+                    onClick={() => {
+                      setSelectedRegion(lastCreatedRegion);
+                      setShowAIOptimizer(true);
+                      setShowOptimizationPrompt(false);
+                    }}
+                    className="bg-blue-600 hover:bg-blue-500 text-white"
+                  >
+                    <Sparkles className="h-3 w-3 mr-1" />
+                    Optimize
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setShowOptimizationPrompt(false)}
+                    className="border-blue-600/50 text-blue-300"
+                  >
+                    Skip
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Modals */}
       <ColorPickerDrawer
         isOpen={showColorPicker}
@@ -236,6 +378,23 @@ const Index = () => {
         selectedColor={selectedOutlineColor}
         onColorSelect={setSelectedOutlineColor}
       />
+
+      {/* AI Components - These would be imported from separate files */}
+
+      <AIEdgeDetection
+        image={image}
+        onRegionsDetected={handleAIRegionsDetected}
+        isOpen={showAIEdgeDetection}
+        onClose={() => setShowAIEdgeDetection(false)}
+      />
+
+      <AIOutlineOptimizer
+        region={selectedRegion}
+        isOpen={showAIOptimizer}
+        onClose={() => setShowAIOptimizer(false)}
+        onOptimizationApplied={handleOptimizationApplied}
+      />
+
     </div>
   );
 };
