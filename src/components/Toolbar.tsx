@@ -42,11 +42,26 @@ const Toolbar: React.FC<ToolbarProps> = ({
   };
 
   const handleToolChange = (tool: 'pen' | 'fill' | 'select' | 'rectangle' | 'polygon') => {
+    // Validation for tools
     if (tool === 'fill') {
       onOpenColorPicker();
     } else if (['pen', 'rectangle', 'polygon'].includes(tool)) {
       onOpenOutlineDialog();
     }
+    
+    // Add validation feedback
+    if (tool === 'pen') {
+      console.log('Pen tool selected - ready for freehand drawing');
+    } else if (tool === 'rectangle') {
+      console.log('Rectangle tool selected - click and drag to create rectangles');
+    } else if (tool === 'polygon') {
+      console.log('Polygon tool selected - click points to create polygons');
+    } else if (tool === 'fill') {
+      console.log('Fill tool selected - click regions to add color');
+    } else if (tool === 'select') {
+      console.log('Select tool selected - click regions to select them');
+    }
+    
     onToolChange(tool);
     setShowToolsSubmenu(false);
     setShowMobileSubmenu(false);

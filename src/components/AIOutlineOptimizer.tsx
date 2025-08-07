@@ -508,6 +508,17 @@ const AIOutlineOptimizer: React.FC<AIOutlineOptimizerProps> = ({
                         </div>
                     )}
 
+                    {/* Back Button for All Cases */}
+                    <div className="flex justify-center pt-2">
+                        <Button
+                            variant="ghost"
+                            onClick={onClose}
+                            className="text-zinc-400 hover:text-white"
+                        >
+                            Close
+                        </Button>
+                    </div>
+
                     {/* Tips */}
                     <div className="bg-zinc-800/50 p-3 rounded-lg">
                         <h4 className="text-sm font-semibold text-blue-400 mb-2">💡 Optimization Tips</h4>

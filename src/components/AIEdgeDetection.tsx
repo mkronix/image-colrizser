@@ -456,18 +456,26 @@ const AIEdgeDetection: React.FC<AIEdgeDetectionProps> = ({
             console.log(`Detected ${detectedRegions.length} regions`); // Debug log
 
             if (previewMode) {
-                // Create preview with detected regions
+                // Create preview with detected regions overlaid on original image
                 ctx.strokeStyle = '#00ff88';
-                ctx.lineWidth = 2;
+                ctx.lineWidth = 3;
+                ctx.shadowColor = '#00ff88';
+                ctx.shadowBlur = 5;
 
                 detectedRegions.forEach(region => {
-                    ctx.beginPath();
-                    ctx.moveTo(region[0].x, region[0].y);
-                    region.slice(1).forEach(point => {
-                        ctx.lineTo(point.x, point.y);
-                    });
-                    ctx.closePath();
-                    ctx.stroke();
+                    if (region.length > 0) {
+                        ctx.beginPath();
+                        ctx.moveTo(region[0].x, region[0].y);
+                        region.slice(1).forEach(point => {
+                            ctx.lineTo(point.x, point.y);
+                        });
+                        ctx.closePath();
+                        ctx.stroke();
+                        
+                        // Fill with transparent color for better visibility
+                        ctx.fillStyle = 'rgba(0, 255, 136, 0.1)';
+                        ctx.fill();
+                    }
                 });
 
                 setPreviewImage(canvas.toDataURL());
@@ -476,24 +484,31 @@ const AIEdgeDetection: React.FC<AIEdgeDetectionProps> = ({
                 return;
             }
 
-            // Scale regions back to original size
-            const regions: Region[] = detectedRegions.map((region, index) => ({
-                id: `ai-region-${Date.now()}-${index}`,
-                points: region.map(point => ({
-                    x: point.x / scale,
-                    y: point.y / scale
-                })),
-                outlineColor: '#00ff88',
-                filled: false,
-                type: 'polygon' as const
-            }));
+            // Scale regions back to original size and ensure proper format
+            const regions: Region[] = detectedRegions
+                .filter(region => region.length >= 3) // Only keep valid regions
+                .map((region, index) => ({
+                    id: `ai-region-${Date.now()}-${index}`,
+                    points: region.map(point => ({
+                        x: Math.round(point.x / scale),
+                        y: Math.round(point.y / scale)
+                    })),
+                    outlineColor: '#00ff88',
+                    color: undefined, // No fill color initially
+                    filled: false,
+                    type: 'polygon' as const
+                }));
 
             setProgress(100);
             setProcessingStage('Complete!');
 
-            console.log(`Sending ${regions.length} regions to parent`); // Debug log
+            console.log(`Sending ${regions.length} valid regions to canvas`); // Debug log
 
-            onRegionsDetected(regions);
+            if (regions.length > 0) {
+                onRegionsDetected(regions);
+            } else {
+                console.warn('No valid regions detected');
+            }
 
             toast({
                 title: "🤖 AI Detection Successful!",
@@ -655,6 +670,31 @@ const AIEdgeDetection: React.FC<AIEdgeDetectionProps> = ({
                                     {previewMode ? 'Preview Detection' : 'Detect Regions'}
                                 </Button>
                             </div>
+                            
+                            {/* Preview Action Buttons */}
+                            {previewImage && !isProcessing && previewMode && (
+                                <div className="flex gap-2 pt-2">
+                                    <Button
+                                        onClick={() => {
+                                            setPreviewMode(false);
+                                            processImage();
+                                        }}
+                                        className="flex-1 bg-green-600 hover:bg-green-500"
+                                    >
+                                        Add to Canvas
+                                    </Button>
+                                    <Button
+                                        variant="outline"
+                                        onClick={() => {
+                                            setPreviewImage(null);
+                                            setPreviewMode(false);
+                                        }}
+                                        className="border-zinc-600 text-white hover:bg-zinc-800"
+                                    >
+                                        Back
+                                    </Button>
+                                </div>
+                            )}
                         </>
                     )}
 
