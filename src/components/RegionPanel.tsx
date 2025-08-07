@@ -1,7 +1,6 @@
-
 import React from 'react';
 import { Button } from '@/components/ui/button';
-import { Trash2, Palette, Pen, Square, Polygon } from 'lucide-react';
+import { Trash2, Palette, Pen, Square, Hexagon } from 'lucide-react';
 
 interface Region {
   id: string;
@@ -34,7 +33,7 @@ const RegionPanel: React.FC<RegionPanelProps> = ({
       case 'rectangle':
         return Square;
       case 'polygon':
-        return Polygon;
+        return Hexagon;
       default:
         return Pen;
     }

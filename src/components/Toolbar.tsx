@@ -1,7 +1,6 @@
-
 import React from 'react';
 import { Button } from '@/components/ui/button';
-import { Pen, Palette, MousePointer, Upload, Download, Eye, EyeOff, Square, Polygon } from 'lucide-react';
+import { Pen, Palette, MousePointer, Upload, Download, Eye, EyeOff, Square, Hexagon } from 'lucide-react';
 
 interface ToolbarProps {
   currentTool: 'pen' | 'fill' | 'select' | 'rectangle' | 'polygon';
@@ -30,7 +29,7 @@ const Toolbar: React.FC<ToolbarProps> = ({
   const tools = [
     { id: 'pen' as const, icon: Pen, label: 'Draw Outline' },
     { id: 'rectangle' as const, icon: Square, label: 'Rectangle' },
-    { id: 'polygon' as const, icon: Polygon, label: 'Polygon' },
+    { id: 'polygon' as const, icon: Hexagon, label: 'Polygon' },
     { id: 'fill' as const, icon: Palette, label: 'Fill Color' },
     { id: 'select' as const, icon: MousePointer, label: 'Select Region' }
   ];
