@@ -1,3 +1,4 @@
+
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 
 interface Point {
@@ -9,6 +10,7 @@ interface Region {
   id: string;
   points: Point[];
   color?: string;
+  outlineColor?: string;
   texture?: string;
   filled: boolean;
   type: 'freehand' | 'rectangle' | 'polygon';
@@ -18,6 +20,7 @@ interface ImageCanvasProps {
   image: HTMLImageElement | null;
   currentTool: 'pen' | 'fill' | 'select' | 'rectangle' | 'polygon';
   selectedColor: string;
+  selectedOutlineColor: string;
   onRegionCreated: (region: Region) => void;
   onRegionSelected: (region: Region | null) => void;
   regions: Region[];
@@ -28,6 +31,7 @@ const ImageCanvas: React.FC<ImageCanvasProps> = ({
   image,
   currentTool,
   selectedColor,
+  selectedOutlineColor,
   onRegionCreated,
   onRegionSelected,
   regions,
@@ -38,6 +42,7 @@ const ImageCanvas: React.FC<ImageCanvasProps> = ({
   const [currentPath, setCurrentPath] = useState<Point[]>([]);
   const [startPoint, setStartPoint] = useState<Point | null>(null);
   const [canvasSize, setCanvasSize] = useState({ width: 800, height: 600 });
+  const [polygonPoints, setPolygonPoints] = useState<Point[]>([]);
 
   const drawImage = useCallback(() => {
     const canvas = canvasRef.current;
@@ -117,7 +122,7 @@ const ImageCanvas: React.FC<ImageCanvasProps> = ({
       regions.forEach(region => {
         if (region.points.length > 1) {
           ctx.beginPath();
-          ctx.strokeStyle = '#60a5fa';
+          ctx.strokeStyle = region.outlineColor || '#60a5fa';
           ctx.lineWidth = 2;
           
           if (region.type === 'rectangle' && region.points.length >= 2) {
@@ -128,6 +133,9 @@ const ImageCanvas: React.FC<ImageCanvasProps> = ({
             region.points.slice(1).forEach(point => {
               ctx.lineTo(point.x, point.y);
             });
+            if (region.type === 'polygon') {
+              ctx.closePath();
+            }
           }
           ctx.stroke();
         }
@@ -140,28 +148,32 @@ const ImageCanvas: React.FC<ImageCanvasProps> = ({
         currentPath.slice(1).forEach(point => {
           ctx.lineTo(point.x, point.y);
         });
-        ctx.strokeStyle = '#a855f7';
+        ctx.strokeStyle = selectedOutlineColor || '#a855f7';
         ctx.lineWidth = 3;
         ctx.stroke();
       } else if (currentTool === 'rectangle' && startPoint && currentPath.length > 0) {
         const endPoint = currentPath[currentPath.length - 1];
         ctx.beginPath();
         ctx.rect(startPoint.x, startPoint.y, endPoint.x - startPoint.x, endPoint.y - startPoint.y);
-        ctx.strokeStyle = '#a855f7';
+        ctx.strokeStyle = selectedOutlineColor || '#a855f7';
         ctx.lineWidth = 3;
         ctx.stroke();
-      } else if (currentTool === 'polygon' && currentPath.length > 1) {
+      } else if (currentTool === 'polygon' && polygonPoints.length > 0) {
         ctx.beginPath();
-        ctx.moveTo(currentPath[0].x, currentPath[0].y);
-        currentPath.slice(1).forEach(point => {
+        ctx.moveTo(polygonPoints[0].x, polygonPoints[0].y);
+        polygonPoints.slice(1).forEach(point => {
           ctx.lineTo(point.x, point.y);
         });
-        ctx.strokeStyle = '#a855f7';
+        // Draw line to current mouse position if actively drawing
+        if (currentPath.length > 0) {
+          ctx.lineTo(currentPath[currentPath.length - 1].x, currentPath[currentPath.length - 1].y);
+        }
+        ctx.strokeStyle = selectedOutlineColor || '#a855f7';
         ctx.lineWidth = 3;
         ctx.stroke();
       }
     }
-  }, [image, regions, currentPath, showOutlines, currentTool, startPoint]);
+  }, [image, regions, currentPath, showOutlines, currentTool, startPoint, selectedOutlineColor, polygonPoints]);
 
   useEffect(() => {
     drawImage();
@@ -210,9 +222,11 @@ const ImageCanvas: React.FC<ImageCanvasProps> = ({
     } else if (currentTool === 'polygon') {
       if (!isDrawing) {
         setIsDrawing(true);
+        setPolygonPoints([pos]);
         setCurrentPath([pos]);
       } else {
-        setCurrentPath(prev => [...prev, pos]);
+        setPolygonPoints(prev => [...prev, pos]);
+        setCurrentPath([pos]);
       }
     } else if (currentTool === 'fill' || currentTool === 'select') {
       // Find region at click point
@@ -235,13 +249,13 @@ const ImageCanvas: React.FC<ImageCanvasProps> = ({
   };
 
   const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (!isDrawing) return;
-
     const pos = getMousePos(e);
 
-    if (currentTool === 'pen') {
+    if (currentTool === 'pen' && isDrawing) {
       setCurrentPath(prev => [...prev, pos]);
-    } else if (currentTool === 'rectangle') {
+    } else if (currentTool === 'rectangle' && isDrawing) {
+      setCurrentPath([pos]);
+    } else if (currentTool === 'polygon' && isDrawing) {
       setCurrentPath([pos]);
     }
   };
@@ -253,6 +267,7 @@ const ImageCanvas: React.FC<ImageCanvasProps> = ({
         const newRegion: Region = {
           id: `region-${Date.now()}`,
           points: currentPath,
+          outlineColor: selectedOutlineColor,
           filled: false,
           type: 'freehand'
         };
@@ -263,6 +278,7 @@ const ImageCanvas: React.FC<ImageCanvasProps> = ({
         const newRegion: Region = {
           id: `region-${Date.now()}`,
           points: [startPoint, endPoint],
+          outlineColor: selectedOutlineColor,
           filled: false,
           type: 'rectangle'
         };
@@ -278,19 +294,30 @@ const ImageCanvas: React.FC<ImageCanvasProps> = ({
   };
 
   const handleDoubleClick = () => {
-    if (currentTool === 'polygon' && isDrawing && currentPath.length > 2) {
+    if (currentTool === 'polygon' && isDrawing && polygonPoints.length > 2) {
       // Finish polygon
       const newRegion: Region = {
         id: `region-${Date.now()}`,
-        points: currentPath,
+        points: polygonPoints,
+        outlineColor: selectedOutlineColor,
         filled: false,
         type: 'polygon'
       };
       onRegionCreated(newRegion);
       setIsDrawing(false);
+      setPolygonPoints([]);
       setCurrentPath([]);
     }
   };
+
+  // Reset polygon state when tool changes
+  useEffect(() => {
+    if (currentTool !== 'polygon') {
+      setIsDrawing(false);
+      setPolygonPoints([]);
+      setCurrentPath([]);
+    }
+  }, [currentTool]);
 
   if (!image) {
     return (
@@ -338,6 +365,11 @@ const ImageCanvas: React.FC<ImageCanvasProps> = ({
           className="border border-border rounded-lg cursor-crosshair bg-surface shadow-2xl"
           style={{ maxWidth: '100%', height: 'auto' }}
         />
+        {currentTool === 'polygon' && isDrawing && (
+          <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 bg-background/90 px-3 py-1 rounded-lg text-sm">
+            Double-click to finish polygon
+          </div>
+        )}
       </div>
     </div>
   );

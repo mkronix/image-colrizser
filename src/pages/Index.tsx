@@ -1,8 +1,11 @@
+
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import Header from '@/components/Header';
 import Toolbar from '@/components/Toolbar';
 import ImageCanvas from '@/components/ImageCanvas';
 import ColorPicker from '@/components/ColorPicker';
+import ColorPickerDrawer from '@/components/ColorPickerDrawer';
+import OutlineColorDialog from '@/components/OutlineColorDialog';
 import RegionPanel from '@/components/RegionPanel';
 import { useHistory } from '@/hooks/useHistory';
 import { toast } from 'sonner';
@@ -11,6 +14,7 @@ interface Region {
   id: string;
   points: { x: number; y: number }[];
   color?: string;
+  outlineColor?: string;
   texture?: string;
   filled: boolean;
   type: 'freehand' | 'rectangle' | 'polygon';
@@ -20,8 +24,11 @@ const Index = () => {
   const [image, setImage] = useState<HTMLImageElement | null>(null);
   const [currentTool, setCurrentTool] = useState<'pen' | 'fill' | 'select' | 'rectangle' | 'polygon'>('pen');
   const [selectedColor, setSelectedColor] = useState('#ff6b6b');
+  const [selectedOutlineColor, setSelectedOutlineColor] = useState('#3b82f6');
   const [selectedRegion, setSelectedRegion] = useState<Region | null>(null);
   const [showColorPicker, setShowColorPicker] = useState(false);
+  const [showColorDrawer, setShowColorDrawer] = useState(false);
+  const [showOutlineDialog, setShowOutlineDialog] = useState(false);
   const [showOutlines, setShowOutlines] = useState(true);
 
   // Use history hook for undo/redo functionality
@@ -69,6 +76,15 @@ const Index = () => {
     };
     img.src = URL.createObjectURL(file);
   }, [reset]);
+
+  const handleToolChange = useCallback((tool: 'pen' | 'fill' | 'select' | 'rectangle' | 'polygon') => {
+    if (tool === 'fill') {
+      setShowColorDrawer(true);
+    } else if (['pen', 'rectangle', 'polygon'].includes(tool)) {
+      setShowOutlineDialog(true);
+    }
+    setCurrentTool(tool);
+  }, []);
 
   const handleRegionCreated = useCallback((region: Region) => {
     const existingIndex = regions.findIndex(r => r.id === region.id);
@@ -188,7 +204,7 @@ const Index = () => {
           {/* Left Toolbar */}
           <Toolbar
             currentTool={currentTool}
-            onToolChange={setCurrentTool}
+            onToolChange={handleToolChange}
             onImageUpload={handleImageUpload}
             onExport={handleExport}
             showOutlines={showOutlines}
@@ -205,23 +221,12 @@ const Index = () => {
               image={image}
               currentTool={currentTool}
               selectedColor={selectedColor}
+              selectedOutlineColor={selectedOutlineColor}
               onRegionCreated={handleRegionCreated}
               onRegionSelected={handleRegionSelected}
               regions={regions}
               showOutlines={showOutlines}
             />
-
-            {/* Floating Color Picker */}
-            {currentTool === 'fill' && (
-              <div className="absolute top-4 left-1/2 transform -translate-x-1/2 z-10">
-                <ColorPicker
-                  selectedColor={selectedColor}
-                  onColorChange={setSelectedColor}
-                  isOpen={showColorPicker}
-                  onToggle={() => setShowColorPicker(!showColorPicker)}
-                />
-              </div>
-            )}
           </div>
 
           {/* Right Panel */}
@@ -234,6 +239,22 @@ const Index = () => {
           />
         </div>
       </div>
+
+      {/* Color Picker Drawer */}
+      <ColorPickerDrawer
+        isOpen={showColorDrawer}
+        onClose={() => setShowColorDrawer(false)}
+        selectedColor={selectedColor}
+        onColorSelect={setSelectedColor}
+      />
+
+      {/* Outline Color Dialog */}
+      <OutlineColorDialog
+        isOpen={showOutlineDialog}
+        onClose={() => setShowOutlineDialog(false)}
+        selectedColor={selectedOutlineColor}
+        onColorSelect={setSelectedOutlineColor}
+      />
     </div>
   );
 };
