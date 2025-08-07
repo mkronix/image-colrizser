@@ -1,4 +1,3 @@
-
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 
 interface Point {
@@ -44,15 +43,27 @@ const ImageCanvas: React.FC<ImageCanvasProps> = ({
   const [canvasSize, setCanvasSize] = useState({ width: 800, height: 600 });
   const [polygonPoints, setPolygonPoints] = useState<Point[]>([]);
 
+  // Mobile-specific states
+  const [isMobile, setIsMobile] = useState(false);
+  const [lastTouchTime, setLastTouchTime] = useState(0);
+
+  useEffect(() => {
+    const checkMobile = () => {
+      setIsMobile(window.innerWidth <= 768 || 'ontouchstart' in window);
+    };
+
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    return () => window.removeEventListener('resize', checkMobile);
+  }, []);
+
   const drawImage = useCallback(() => {
     const canvas = canvasRef.current;
     const ctx = canvas?.getContext('2d');
     if (!canvas || !ctx) return;
 
-    // Clear canvas
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    // Draw image if available
     if (image) {
       const { width, height } = image;
       const canvasRatio = canvas.width / canvas.height;
@@ -75,13 +86,11 @@ const ImageCanvas: React.FC<ImageCanvasProps> = ({
       ctx.drawImage(image, offsetX, offsetY, drawWidth, drawHeight);
     }
 
-    // Draw filled regions with better blending
+    // Draw filled regions
     regions.forEach(region => {
       if (region.filled && region.points.length > 0 && region.color) {
-        console.log('Drawing filled region:', region.id, 'with color:', region.color);
         ctx.save();
 
-        // Create clipping path for the region
         ctx.beginPath();
         if (region.type === 'rectangle' && region.points.length >= 2) {
           const [start, end] = region.points;
@@ -96,19 +105,15 @@ const ImageCanvas: React.FC<ImageCanvasProps> = ({
 
         ctx.clip();
 
-        // Create a semi-transparent overlay for better blending
         const color = region.color;
-        // Convert hex to rgba for blending
         const r = parseInt(color.slice(1, 3), 16);
         const g = parseInt(color.slice(3, 5), 16);
         const b = parseInt(color.slice(5, 7), 16);
 
-        // Apply color with multiply blend mode for better integration
         ctx.globalCompositeOperation = 'multiply';
         ctx.fillStyle = `rgba(${r}, ${g}, ${b}, 0.7)`;
         ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-        // Add a subtle color overlay
         ctx.globalCompositeOperation = 'overlay';
         ctx.fillStyle = `rgba(${r}, ${g}, ${b}, 0.3)`;
         ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -117,13 +122,13 @@ const ImageCanvas: React.FC<ImageCanvasProps> = ({
       }
     });
 
-    // Draw outlines if enabled
+    // Draw outlines
     if (showOutlines) {
       regions.forEach(region => {
         if (region.points.length > 1) {
           ctx.beginPath();
           ctx.strokeStyle = region.outlineColor || '#60a5fa';
-          ctx.lineWidth = 2;
+          ctx.lineWidth = isMobile ? 3 : 2; // Thicker lines on mobile
 
           if (region.type === 'rectangle' && region.points.length >= 2) {
             const [start, end] = region.points;
@@ -141,7 +146,7 @@ const ImageCanvas: React.FC<ImageCanvasProps> = ({
         }
       });
 
-      // Draw current path based on tool
+      // Draw current path
       if (currentTool === 'pen' && currentPath.length > 1) {
         ctx.beginPath();
         ctx.moveTo(currentPath[0].x, currentPath[0].y);
@@ -149,14 +154,14 @@ const ImageCanvas: React.FC<ImageCanvasProps> = ({
           ctx.lineTo(point.x, point.y);
         });
         ctx.strokeStyle = selectedOutlineColor || '#a855f7';
-        ctx.lineWidth = 3;
+        ctx.lineWidth = isMobile ? 4 : 3; // Thicker on mobile
         ctx.stroke();
       } else if (currentTool === 'rectangle' && startPoint && currentPath.length > 0) {
         const endPoint = currentPath[currentPath.length - 1];
         ctx.beginPath();
         ctx.rect(startPoint.x, startPoint.y, endPoint.x - startPoint.x, endPoint.y - startPoint.y);
         ctx.strokeStyle = selectedOutlineColor || '#a855f7';
-        ctx.lineWidth = 3;
+        ctx.lineWidth = isMobile ? 4 : 3;
         ctx.stroke();
       } else if (currentTool === 'polygon' && polygonPoints.length > 0) {
         ctx.beginPath();
@@ -164,33 +169,50 @@ const ImageCanvas: React.FC<ImageCanvasProps> = ({
         polygonPoints.slice(1).forEach(point => {
           ctx.lineTo(point.x, point.y);
         });
-        // Draw line to current mouse position if actively drawing
         if (currentPath.length > 0) {
           ctx.lineTo(currentPath[currentPath.length - 1].x, currentPath[currentPath.length - 1].y);
         }
         ctx.strokeStyle = selectedOutlineColor || '#a855f7';
-        ctx.lineWidth = 3;
+        ctx.lineWidth = isMobile ? 4 : 3;
         ctx.stroke();
       }
     }
-  }, [image, regions, currentPath, showOutlines, currentTool, startPoint, selectedOutlineColor, polygonPoints]);
+  }, [image, regions, currentPath, showOutlines, currentTool, startPoint, selectedOutlineColor, polygonPoints, isMobile]);
 
   useEffect(() => {
     drawImage();
   }, [drawImage]);
 
-  const getMousePos = (e: React.MouseEvent<HTMLCanvasElement>) => {
+  // Unified position getting function for mouse and touch
+  const getEventPos = useCallback((e: MouseEvent | TouchEvent): Point => {
     const canvas = canvasRef.current;
     if (!canvas) return { x: 0, y: 0 };
 
     const rect = canvas.getBoundingClientRect();
-    return {
-      x: e.clientX - rect.left,
-      y: e.clientY - rect.top
-    };
-  };
 
-  const isPointInRegion = (point: Point, region: Region): boolean => {
+    if ('touches' in e && e.touches.length > 0) {
+      // Touch event
+      return {
+        x: e.touches[0].clientX - rect.left,
+        y: e.touches[0].clientY - rect.top
+      };
+    } else if ('changedTouches' in e && e.changedTouches.length > 0) {
+      // Touch end event
+      return {
+        x: e.changedTouches[0].clientX - rect.left,
+        y: e.changedTouches[0].clientY - rect.top
+      };
+    } else {
+      // Mouse event
+      const mouseEvent = e as MouseEvent;
+      return {
+        x: mouseEvent.clientX - rect.left,
+        y: mouseEvent.clientY - rect.top
+      };
+    }
+  }, []);
+
+  const isPointInRegion = useCallback((point: Point, region: Region): boolean => {
     const canvas = canvasRef.current;
     const ctx = canvas?.getContext('2d');
     if (!ctx || region.points.length < 2) return false;
@@ -206,11 +228,34 @@ const ImageCanvas: React.FC<ImageCanvasProps> = ({
     }
 
     return ctx.isPointInPath(point.x, point.y);
-  };
+  }, []);
 
-  const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    const pos = getMousePos(e);
-    console.log('Mouse down at:', pos, 'Current tool:', currentTool);
+  // Unified start function
+  const handleStart = useCallback((e: MouseEvent | TouchEvent) => {
+    e.preventDefault();
+    const pos = getEventPos(e);
+
+    // Handle double tap for polygon completion on mobile
+    if (isMobile && currentTool === 'polygon') {
+      const now = Date.now();
+      if (now - lastTouchTime < 300) { // Double tap detection
+        if (isDrawing && polygonPoints.length > 2) {
+          const newRegion: Region = {
+            id: `region-${Date.now()}`,
+            points: polygonPoints,
+            outlineColor: selectedOutlineColor,
+            filled: false,
+            type: 'polygon'
+          };
+          onRegionCreated(newRegion);
+          setIsDrawing(false);
+          setPolygonPoints([]);
+          setCurrentPath([]);
+          return;
+        }
+      }
+      setLastTouchTime(now);
+    }
 
     if (currentTool === 'pen') {
       setIsDrawing(true);
@@ -229,86 +274,96 @@ const ImageCanvas: React.FC<ImageCanvasProps> = ({
         setCurrentPath([pos]);
       }
     } else if (currentTool === 'fill' || currentTool === 'select') {
-      // Find region at click point
       const clickedRegion = regions.find(region => isPointInRegion(pos, region));
-      console.log('Clicked region:', clickedRegion, 'Available regions:', regions.length);
 
       if (clickedRegion) {
         if (currentTool === 'fill') {
-          console.log('Filling region with color:', selectedColor);
-          // Update region with current color
           const updatedRegion = { ...clickedRegion, color: selectedColor, filled: true };
           onRegionCreated(updatedRegion);
         } else {
           onRegionSelected(clickedRegion);
         }
-      } else {
-        console.log('No region found at click position');
       }
     }
-  };
+  }, [currentTool, getEventPos, selectedColor, selectedOutlineColor, onRegionCreated, onRegionSelected, regions, isPointInRegion, isMobile, lastTouchTime, isDrawing, polygonPoints]);
 
-  const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    const pos = getMousePos(e);
+  // Unified move function
+  const handleMove = useCallback((e: MouseEvent | TouchEvent) => {
+    if (!isDrawing) return;
+    e.preventDefault();
 
-    if (currentTool === 'pen' && isDrawing) {
+    const pos = getEventPos(e);
+
+    if (currentTool === 'pen') {
       setCurrentPath(prev => [...prev, pos]);
-    } else if (currentTool === 'rectangle' && isDrawing) {
+    } else if (currentTool === 'rectangle') {
       setCurrentPath([pos]);
-    } else if (currentTool === 'polygon' && isDrawing) {
+    } else if (currentTool === 'polygon') {
       setCurrentPath([pos]);
     }
-  };
+  }, [isDrawing, currentTool, getEventPos]);
 
-  const handleMouseUp = () => {
-    if (isDrawing) {
-      if (currentTool === 'pen' && currentPath.length > 2) {
-        // Create new freehand region
-        const newRegion: Region = {
-          id: `region-${Date.now()}`,
-          points: currentPath,
-          outlineColor: selectedOutlineColor,
-          filled: false,
-          type: 'freehand'
-        };
-        onRegionCreated(newRegion);
-      } else if (currentTool === 'rectangle' && startPoint && currentPath.length > 0) {
-        // Create new rectangle region
-        const endPoint = currentPath[currentPath.length - 1];
-        const newRegion: Region = {
-          id: `region-${Date.now()}`,
-          points: [startPoint, endPoint],
-          outlineColor: selectedOutlineColor,
-          filled: false,
-          type: 'rectangle'
-        };
-        onRegionCreated(newRegion);
-      }
+  // Unified end function
+  const handleEnd = useCallback((e: MouseEvent | TouchEvent) => {
+    if (!isDrawing) return;
+    e.preventDefault();
 
-      if (currentTool !== 'polygon') {
-        setIsDrawing(false);
-        setCurrentPath([]);
-        setStartPoint(null);
-      }
-    }
-  };
-
-  const handleDoubleClick = () => {
-    if (currentTool === 'polygon' && isDrawing && polygonPoints.length > 2) {
-      // Finish polygon
+    if (currentTool === 'pen' && currentPath.length > 2) {
       const newRegion: Region = {
         id: `region-${Date.now()}`,
-        points: polygonPoints,
+        points: currentPath,
         outlineColor: selectedOutlineColor,
         filled: false,
-        type: 'polygon'
+        type: 'freehand'
       };
       onRegionCreated(newRegion);
-      setIsDrawing(false);
-      setPolygonPoints([]);
-      setCurrentPath([]);
+    } else if (currentTool === 'rectangle' && startPoint && currentPath.length > 0) {
+      const endPoint = currentPath[currentPath.length - 1];
+      const newRegion: Region = {
+        id: `region-${Date.now()}`,
+        points: [startPoint, endPoint],
+        outlineColor: selectedOutlineColor,
+        filled: false,
+        type: 'rectangle'
+      };
+      onRegionCreated(newRegion);
     }
-  };
+
+    if (currentTool !== 'polygon') {
+      setIsDrawing(false);
+      setCurrentPath([]);
+      setStartPoint(null);
+    }
+  }, [isDrawing, currentTool, currentPath, startPoint, selectedOutlineColor, onRegionCreated]);
+
+  // Mouse event handlers
+  const handleMouseDown = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (isMobile) return; // Ignore mouse events on mobile
+    handleStart(e.nativeEvent);
+  }, [handleStart, isMobile]);
+
+  const handleMouseMove = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (isMobile) return;
+    handleMove(e.nativeEvent);
+  }, [handleMove, isMobile]);
+
+  const handleMouseUp = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (isMobile) return;
+    handleEnd(e.nativeEvent);
+  }, [handleEnd, isMobile]);
+
+  // Touch event handlers
+  const handleTouchStart = useCallback((e: React.TouchEvent<HTMLCanvasElement>) => {
+    handleStart(e.nativeEvent);
+  }, [handleStart]);
+
+  const handleTouchMove = useCallback((e: React.TouchEvent<HTMLCanvasElement>) => {
+    handleMove(e.nativeEvent);
+  }, [handleMove]);
+
+  const handleTouchEnd = useCallback((e: React.TouchEvent<HTMLCanvasElement>) => {
+    handleEnd(e.nativeEvent);
+  }, [handleEnd]);
 
   // Reset polygon state when tool changes
   useEffect(() => {
@@ -352,7 +407,7 @@ const ImageCanvas: React.FC<ImageCanvasProps> = ({
   }
 
   return (
-    <div className=" relative w-full flex justify-center items-center">
+    <div className="relative w-full flex justify-center items-center">
       <canvas
         ref={canvasRef}
         width={canvasSize.width}
@@ -360,13 +415,19 @@ const ImageCanvas: React.FC<ImageCanvasProps> = ({
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
-        onDoubleClick={handleDoubleClick}
-        className="border border-zinc-700 rounded-lg cursor-crosshair bg-zinc-800"
-        style={{ maxWidth: '100%', height: 'auto' }}
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
+        className="border border-zinc-700 rounded-lg cursor-crosshair bg-zinc-800 touch-none"
+        style={{
+          maxWidth: '100%',
+          height: 'auto',
+          touchAction: 'none' // Prevent default touch behaviors
+        }}
       />
       {currentTool === 'polygon' && isDrawing && (
         <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 bg-zinc-900/90 px-3 py-1 rounded-lg text-sm border border-zinc-700 text-white">
-          Double-click to finish polygon
+          {isMobile ? 'Double-tap to finish polygon' : 'Double-click to finish polygon'}
         </div>
       )}
     </div>
