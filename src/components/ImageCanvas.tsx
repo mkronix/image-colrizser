@@ -51,9 +51,9 @@ const ImageCanvas: React.FC<ImageCanvasProps> = ({
       const { width, height } = image;
       const canvasRatio = canvas.width / canvas.height;
       const imageRatio = width / height;
-      
+
       let drawWidth, drawHeight, offsetX, offsetY;
-      
+
       if (imageRatio > canvasRatio) {
         drawWidth = canvas.width;
         drawHeight = canvas.width / imageRatio;
@@ -65,7 +65,7 @@ const ImageCanvas: React.FC<ImageCanvasProps> = ({
         offsetX = (canvas.width - drawWidth) / 2;
         offsetY = 0;
       }
-      
+
       ctx.drawImage(image, offsetX, offsetY, drawWidth, drawHeight);
     }
 
@@ -83,7 +83,7 @@ const ImageCanvas: React.FC<ImageCanvasProps> = ({
         if (region.color) {
           ctx.fillStyle = region.color;
         }
-        
+
         // Use source-atop to only fill where image exists
         ctx.globalCompositeOperation = 'source-atop';
         ctx.fill();
@@ -127,7 +127,7 @@ const ImageCanvas: React.FC<ImageCanvasProps> = ({
   const getMousePos = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
     if (!canvas) return { x: 0, y: 0 };
-    
+
     const rect = canvas.getBoundingClientRect();
     return {
       x: e.clientX - rect.left,
@@ -144,20 +144,20 @@ const ImageCanvas: React.FC<ImageCanvasProps> = ({
     ctx.moveTo(region.points[0].x, region.points[0].y);
     region.points.slice(1).forEach(p => ctx.lineTo(p.x, p.y));
     ctx.closePath();
-    
+
     return ctx.isPointInPath(point.x, point.y);
   };
 
   const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const pos = getMousePos(e);
-    
+
     if (currentTool === 'pen') {
       setIsDrawing(true);
       setCurrentPath([pos]);
     } else if (currentTool === 'fill' || currentTool === 'select') {
       // Find region at click point
       const clickedRegion = regions.find(region => isPointInRegion(pos, region));
-      
+
       if (clickedRegion) {
         if (currentTool === 'fill') {
           // Update region with current color
@@ -172,7 +172,7 @@ const ImageCanvas: React.FC<ImageCanvasProps> = ({
 
   const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
     if (!isDrawing || currentTool !== 'pen') return;
-    
+
     const pos = getMousePos(e);
     setCurrentPath(prev => [...prev, pos]);
   };
@@ -187,10 +187,44 @@ const ImageCanvas: React.FC<ImageCanvasProps> = ({
       };
       onRegionCreated(newRegion);
     }
-    
+
     setIsDrawing(false);
     setCurrentPath([]);
   };
+
+
+  if (!image) {
+    return (
+
+      <div className="flex-1 flex items-center justify-center p-4">
+        <div className="text-center glass-panel rounded-2xl p-8 max-w-md animate-fade-in">
+          <div className="text-6xl mb-4">🎨</div>
+          <h2 className="text-2xl font-bold mb-2">Welcome to ColorStudio Pro</h2>
+          <p className="text-muted-foreground mb-4">
+            Upload an image to start creating beautiful colorized artwork
+          </p>
+          <div className="text-sm text-muted-foreground">
+            <div className="flex items-center justify-center gap-2 mb-2">
+              <span className="w-2 h-2 bg-primary rounded-full"></span>
+              <span>Upload your image</span>
+            </div>
+            <div className="flex items-center justify-center gap-2 mb-2">
+              <span className="w-2 h-2 bg-accent-electric rounded-full"></span>
+              <span>Outline different regions</span>
+            </div>
+            <div className="flex items-center justify-center gap-2 mb-2">
+              <span className="w-2 h-2 bg-accent-neon rounded-full"></span>
+              <span>Fill with colors</span>
+            </div>
+            <div className="flex items-center justify-center gap-2">
+              <span className="w-2 h-2 bg-muted rounded-full"></span>
+              <span>Export your masterpiece</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="flex-1 flex items-center justify-center p-4">

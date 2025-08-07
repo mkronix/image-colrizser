@@ -47,7 +47,7 @@ const Index = () => {
       }
       return [...prev, region];
     });
-    
+
     if (!region.filled) {
       toast.success('Region outlined! Use fill tool to colorize.');
     }
@@ -67,8 +67,8 @@ const Index = () => {
   }, []);
 
   const handleColorChange = useCallback((regionId: string, color: string) => {
-    setRegions(prev => prev.map(region => 
-      region.id === regionId 
+    setRegions(prev => prev.map(region =>
+      region.id === regionId
         ? { ...region, color, filled: true }
         : region
     ));
@@ -101,7 +101,7 @@ const Index = () => {
         if (region.color) {
           ctx.fillStyle = region.color;
         }
-        
+
         ctx.globalCompositeOperation = 'source-atop';
         ctx.fill();
         ctx.globalCompositeOperation = 'source-over';
@@ -123,10 +123,10 @@ const Index = () => {
   }, [image, regions]);
 
   return (
-    <div className="min-h-screen p-6">
-      <div className="max-w-7xl mx-auto">
+    <div className="h-screen p-2">
+      <div className="">
         <Header />
-        
+
         <div className="flex gap-6 h-[calc(100vh-8rem)]">
           {/* Left Toolbar */}
           <Toolbar
@@ -140,6 +140,7 @@ const Index = () => {
 
           {/* Main Canvas Area */}
           <div className="flex-1 flex flex-col">
+
             <ImageCanvas
               image={image}
               currentTool={currentTool}
@@ -172,37 +173,6 @@ const Index = () => {
             onColorChange={handleColorChange}
           />
         </div>
-
-        {/* Welcome Message */}
-        {!image && (
-          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-            <div className="text-center glass-panel rounded-2xl p-8 max-w-md animate-fade-in">
-              <div className="text-6xl mb-4">🎨</div>
-              <h2 className="text-2xl font-bold mb-2">Welcome to ColorStudio Pro</h2>
-              <p className="text-muted-foreground mb-4">
-                Upload an image to start creating beautiful colorized artwork
-              </p>
-              <div className="text-sm text-muted-foreground">
-                <div className="flex items-center justify-center gap-2 mb-2">
-                  <span className="w-2 h-2 bg-primary rounded-full"></span>
-                  <span>Upload your image</span>
-                </div>
-                <div className="flex items-center justify-center gap-2 mb-2">
-                  <span className="w-2 h-2 bg-accent-electric rounded-full"></span>
-                  <span>Outline different regions</span>
-                </div>
-                <div className="flex items-center justify-center gap-2 mb-2">
-                  <span className="w-2 h-2 bg-accent-neon rounded-full"></span>
-                  <span>Fill with colors</span>
-                </div>
-                <div className="flex items-center justify-center gap-2">
-                  <span className="w-2 h-2 bg-muted rounded-full"></span>
-                  <span>Export your masterpiece</span>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
       </div>
     </div>
   );
