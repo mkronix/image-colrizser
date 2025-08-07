@@ -1,6 +1,7 @@
+
 import React from 'react';
 import { Button } from '@/components/ui/button';
-import { Pen, Palette, MousePointer, Upload, Download, Eye, EyeOff, Square, Hexagon } from 'lucide-react';
+import { Pen, Palette, MousePointer, Upload, Download, Eye, EyeOff, Square, Hexagon, Undo2, Redo2 } from 'lucide-react';
 
 interface ToolbarProps {
   currentTool: 'pen' | 'fill' | 'select' | 'rectangle' | 'polygon';
@@ -9,6 +10,10 @@ interface ToolbarProps {
   onExport: () => void;
   showOutlines: boolean;
   onToggleOutlines: () => void;
+  canUndo: boolean;
+  canRedo: boolean;
+  onUndo: () => void;
+  onRedo: () => void;
 }
 
 const Toolbar: React.FC<ToolbarProps> = ({
@@ -17,7 +22,11 @@ const Toolbar: React.FC<ToolbarProps> = ({
   onImageUpload,
   onExport,
   showOutlines,
-  onToggleOutlines
+  onToggleOutlines,
+  canUndo,
+  canRedo,
+  onUndo,
+  onRedo
 }) => {
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -54,6 +63,31 @@ const Toolbar: React.FC<ToolbarProps> = ({
           <Upload className="h-6 w-6" />
         </Button>
       </div>
+
+      <div className="h-px bg-border my-1" />
+
+      {/* Undo/Redo */}
+      <Button
+        variant="ghost"
+        size="icon"
+        onClick={onUndo}
+        disabled={!canUndo}
+        className="w-14 h-14 rounded-xl hover:bg-surface-elevated transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+        title="Undo (Ctrl+Z)"
+      >
+        <Undo2 className="h-6 w-6" />
+      </Button>
+
+      <Button
+        variant="ghost"
+        size="icon"
+        onClick={onRedo}
+        disabled={!canRedo}
+        className="w-14 h-14 rounded-xl hover:bg-surface-elevated transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+        title="Redo (Ctrl+Y)"
+      >
+        <Redo2 className="h-6 w-6" />
+      </Button>
 
       <div className="h-px bg-border my-1" />
 

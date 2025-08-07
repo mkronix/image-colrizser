@@ -1,9 +1,10 @@
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
 import Header from '@/components/Header';
 import Toolbar from '@/components/Toolbar';
 import ImageCanvas from '@/components/ImageCanvas';
 import ColorPicker from '@/components/ColorPicker';
 import RegionPanel from '@/components/RegionPanel';
+import { useHistory } from '@/hooks/useHistory';
 import { toast } from 'sonner';
 
 interface Region {
@@ -19,38 +20,75 @@ const Index = () => {
   const [image, setImage] = useState<HTMLImageElement | null>(null);
   const [currentTool, setCurrentTool] = useState<'pen' | 'fill' | 'select' | 'rectangle' | 'polygon'>('pen');
   const [selectedColor, setSelectedColor] = useState('#ff6b6b');
-  const [regions, setRegions] = useState<Region[]>([]);
   const [selectedRegion, setSelectedRegion] = useState<Region | null>(null);
   const [showColorPicker, setShowColorPicker] = useState(false);
   const [showOutlines, setShowOutlines] = useState(true);
+
+  // Use history hook for undo/redo functionality
+  const {
+    state: regions,
+    canUndo,
+    canRedo,
+    undo,
+    redo,
+    pushToHistory,
+    reset
+  } = useHistory<Region[]>([], 12);
+
+  // Add keyboard shortcuts for undo/redo
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.ctrlKey || e.metaKey) {
+        if (e.key === 'z' && !e.shiftKey) {
+          e.preventDefault();
+          if (canUndo) {
+            undo();
+            toast.success('Undone');
+          }
+        } else if ((e.key === 'y') || (e.key === 'z' && e.shiftKey)) {
+          e.preventDefault();
+          if (canRedo) {
+            redo();
+            toast.success('Redone');
+          }
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [canUndo, canRedo, undo, redo]);
 
   const handleImageUpload = useCallback((file: File) => {
     const img = new Image();
     img.onload = () => {
       setImage(img);
-      setRegions([]); // Clear existing regions
+      reset([]); // Clear existing regions and history
       setSelectedRegion(null);
       toast.success('Image uploaded successfully!');
     };
     img.src = URL.createObjectURL(file);
-  }, []);
+  }, [reset]);
 
   const handleRegionCreated = useCallback((region: Region) => {
-    setRegions(prev => {
-      // Update existing region or add new one
-      const existingIndex = prev.findIndex(r => r.id === region.id);
-      if (existingIndex >= 0) {
-        const updated = [...prev];
-        updated[existingIndex] = region;
-        return updated;
-      }
-      return [...prev, region];
-    });
+    const existingIndex = regions.findIndex(r => r.id === region.id);
+    let newRegions: Region[];
+    
+    if (existingIndex >= 0) {
+      // Update existing region
+      newRegions = [...regions];
+      newRegions[existingIndex] = region;
+    } else {
+      // Add new region
+      newRegions = [...regions, region];
+    }
+    
+    pushToHistory(newRegions);
 
     if (!region.filled) {
       toast.success('Region outlined! Use fill tool to colorize.');
     }
-  }, []);
+  }, [regions, pushToHistory]);
 
   const handleRegionSelected = useCallback((region: Region | null) => {
     setSelectedRegion(region);
@@ -60,18 +98,20 @@ const Index = () => {
   }, [regions]);
 
   const handleRegionDelete = useCallback((regionId: string) => {
-    setRegions(prev => prev.filter(r => r.id !== regionId));
+    const newRegions = regions.filter(r => r.id !== regionId);
+    pushToHistory(newRegions);
     setSelectedRegion(prev => prev?.id === regionId ? null : prev);
     toast.success('Region deleted');
-  }, []);
+  }, [regions, pushToHistory]);
 
   const handleColorChange = useCallback((regionId: string, color: string) => {
-    setRegions(prev => prev.map(region =>
+    const newRegions = regions.map(region =>
       region.id === regionId
         ? { ...region, color, filled: true }
         : region
-    ));
-  }, []);
+    );
+    pushToHistory(newRegions);
+  }, [regions, pushToHistory]);
 
   const handleExport = useCallback(() => {
     const canvas = document.createElement('canvas');
@@ -153,11 +193,14 @@ const Index = () => {
             onExport={handleExport}
             showOutlines={showOutlines}
             onToggleOutlines={() => setShowOutlines(!showOutlines)}
+            canUndo={canUndo}
+            canRedo={canRedo}
+            onUndo={undo}
+            onRedo={redo}
           />
 
           {/* Main Canvas Area */}
-          <div className="flex-1 flex flex-col">
-
+          <div className="flex-1 flex flex-col relative">
             <ImageCanvas
               image={image}
               currentTool={currentTool}
@@ -168,9 +211,9 @@ const Index = () => {
               showOutlines={showOutlines}
             />
 
-            {/* Bottom Color Picker */}
+            {/* Floating Color Picker */}
             {currentTool === 'fill' && (
-              <div className="mt-4 flex justify-center">
+              <div className="absolute top-4 left-1/2 transform -translate-x-1/2 z-10">
                 <ColorPicker
                   selectedColor={selectedColor}
                   onColorChange={setSelectedColor}
