@@ -230,8 +230,8 @@ const Index = () => {
 
         {/* AI Quick Actions Bar - Only show when image is loaded */}
         {image && (
-          <div className="fixed top-20 left-4 right-4 lg:left-24 lg:right-80 z-30 flex justify-center">
-            <div className="bg-zinc-900/95 backdrop-blur-sm border border-zinc-700 rounded-2xl p-2 shadow-2xl">
+          <div className="fixed top-6 left-1/2  z-[100] flex justify-center">
+            <div className="">
               <div className="flex gap-2">
                 <Button
                   size="sm"
@@ -255,16 +255,6 @@ const Index = () => {
                   </Button>
                 )}
 
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={handleExport}
-                  disabled={!regions.some(r => r.filled)}
-                  className="border-purple-600/50 text-purple-400 hover:bg-purple-600/10 hover:border-purple-500"
-                >
-                  <Zap className="h-3 w-3 mr-1" />
-                  Export HD
-                </Button>
               </div>
             </div>
           </div>
