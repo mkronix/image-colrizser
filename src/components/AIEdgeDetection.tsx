@@ -29,9 +29,8 @@ interface AIEdgeDetectionProps {
     onClose: () => void;
 }
 
-// Optimized Edge Detection System
-class OptimizedEdgeDetector {
-    // Optimized grayscale conversion with reduced memory usage
+// Simplified Edge Detection System
+class FastEdgeDetector {
     static toGrayscale(imageData: ImageData): Uint8Array {
         const { data, width, height } = imageData;
         const gray = new Uint8Array(width * height);
@@ -46,20 +45,17 @@ class OptimizedEdgeDetector {
         return gray;
     }
 
-    // Simplified and faster edge detection
-    static fastEdgeDetection(grayData: Uint8Array, width: number, height: number, threshold: number): Uint8Array {
+    static detectEdges(grayData: Uint8Array, width: number, height: number, threshold: number): Uint8Array {
         const edges = new Uint8Array(width * height);
         
-        // Simplified Sobel-like detection for better performance
         for (let y = 1; y < height - 1; y++) {
             for (let x = 1; x < width - 1; x++) {
                 const idx = y * width + x;
                 
-                // Simple gradient calculation
                 const gx = grayData[idx + 1] - grayData[idx - 1];
                 const gy = grayData[idx + width] - grayData[idx - width];
                 
-                const magnitude = Math.abs(gx) + Math.abs(gy); // Manhattan distance for speed
+                const magnitude = Math.abs(gx) + Math.abs(gy);
                 edges[idx] = magnitude > threshold ? 255 : 0;
             }
         }
@@ -67,76 +63,62 @@ class OptimizedEdgeDetector {
         return edges;
     }
 
-    // Fast rectangular region detection
-    static findSimpleRectangles(
-        edges: Uint8Array,
-        width: number,
-        height: number,
-        minSize: number = 20
-    ): Point[][] {
+    static findRectangularRegions(edges: Uint8Array, width: number, height: number): Point[][] {
         const regions: Point[][] = [];
         const visited = new Uint8Array(width * height);
+        const minSize = 30;
         
-        // Scan with larger steps for performance
-        for (let y = minSize; y < height - minSize; y += 8) {
-            for (let x = minSize; x < width - minSize; x += 8) {
-                if (visited[y * width + x] || edges[y * width + x] === 0) continue;
+        // Simple grid-based detection
+        for (let y = minSize; y < height - minSize; y += 20) {
+            for (let x = minSize; x < width - minSize; x += 20) {
+                if (visited[y * width + x]) continue;
 
-                // Look for rectangular patterns
-                const rect = this.detectSimpleRect(edges, width, height, x, y, minSize);
+                const rect = this.detectRectangle(edges, width, height, x, y, minSize);
                 if (rect && rect.length === 4) {
                     regions.push(rect);
-                    this.markVisited(visited, width, rect, 15);
+                    this.markVisited(visited, width, rect, 20);
                 }
 
-                if (regions.length >= 15) break; // Limit for performance
+                if (regions.length >= 8) break; // Limit regions
             }
-            if (regions.length >= 15) break;
+            if (regions.length >= 8) break;
         }
 
         return regions;
     }
 
-    static detectSimpleRect(
-        edges: Uint8Array,
-        width: number,
-        height: number,
-        startX: number,
-        startY: number,
-        minSize: number
-    ): Point[] | null {
-        // Simple rectangular detection
-        let rightX = startX + minSize;
-        let bottomY = startY + minSize;
+    static detectRectangle(edges: Uint8Array, width: number, height: number, startX: number, startY: number, minSize: number): Point[] | null {
+        const maxWidth = 120;
+        const maxHeight = 120;
         
-        // Find reasonable bounds based on edge density
-        while (rightX < width - 5 && rightX - startX < 150) {
+        let w = minSize;
+        let h = minSize;
+        
+        // Simple rectangular detection
+        while (w < maxWidth && startX + w < width - 5) {
             let edgeCount = 0;
-            for (let y = startY; y < Math.min(startY + 50, height); y += 3) {
-                if (edges[y * width + rightX] > 0) edgeCount++;
+            for (let y = startY; y < startY + h && y < height; y += 5) {
+                if (edges[y * width + (startX + w)] > 0) edgeCount++;
             }
-            if (edgeCount < 3) break;
-            rightX += 5;
+            if (edgeCount < 2) break;
+            w += 10;
+        }
+        
+        while (h < maxHeight && startY + h < height - 5) {
+            let edgeCount = 0;
+            for (let x = startX; x < startX + w && x < width; x += 5) {
+                if (edges[(startY + h) * width + x] > 0) edgeCount++;
+            }
+            if (edgeCount < 2) break;
+            h += 10;
         }
 
-        while (bottomY < height - 5 && bottomY - startY < 150) {
-            let edgeCount = 0;
-            for (let x = startX; x < Math.min(startX + 50, width); x += 3) {
-                if (edges[bottomY * width + x] > 0) edgeCount++;
-            }
-            if (edgeCount < 3) break;
-            bottomY += 5;
-        }
-
-        const rectWidth = rightX - startX;
-        const rectHeight = bottomY - startY;
-
-        if (rectWidth >= minSize && rectHeight >= minSize) {
+        if (w >= minSize && h >= minSize) {
             return [
                 { x: startX, y: startY },
-                { x: rightX, y: startY },
-                { x: rightX, y: bottomY },
-                { x: startX, y: bottomY }
+                { x: startX + w, y: startY },
+                { x: startX + w, y: startY + h },
+                { x: startX, y: startY + h }
             ];
         }
 
@@ -145,47 +127,43 @@ class OptimizedEdgeDetector {
 
     static markVisited(visited: Uint8Array, width: number, rect: Point[], padding: number) {
         const minX = Math.max(0, Math.min(...rect.map(p => p.x)) - padding);
-        const maxX = Math.min(width, Math.max(...rect.map(p => p.x)) + padding);
+        const maxX = Math.max(...rect.map(p => p.x)) + padding;
         const minY = Math.max(0, Math.min(...rect.map(p => p.y)) - padding);
         const maxY = Math.max(...rect.map(p => p.y)) + padding;
 
-        for (let y = minY; y < maxY; y += 2) {
-            for (let x = minX; x < maxX; x += 2) {
-                if (y * width + x < visited.length) {
-                    visited[y * width + x] = 1;
-                }
+        for (let y = minY; y < maxY && y * width < visited.length; y += 2) {
+            for (let x = minX; x < maxX && y * width + x < visited.length; x += 2) {
+                visited[y * width + x] = 1;
             }
         }
     }
 
-    // Main optimized detection function
-    static async detectRegions(
-        imageData: ImageData,
-        sensitivity: number = 50,
-        progressCallback?: (progress: number, stage: string) => void
-    ): Promise<Point[][]> {
+    static async detectRegions(imageData: ImageData, sensitivity: number = 50, progressCallback?: (progress: number, stage: string) => void): Promise<Point[][]> {
         const { width, height } = imageData;
         
-        progressCallback?.(10, 'Converting to grayscale...');
-        await new Promise(resolve => setTimeout(resolve, 50)); // Allow UI update
-        
-        const grayData = this.toGrayscale(imageData);
-        
-        progressCallback?.(30, 'Detecting edges...');
-        await new Promise(resolve => setTimeout(resolve, 100));
-        
-        const threshold = Math.max(20, 255 - (sensitivity * 2));
-        const edges = this.fastEdgeDetection(grayData, width, height, threshold);
-        
-        progressCallback?.(60, 'Finding regions...');
-        await new Promise(resolve => setTimeout(resolve, 100));
-        
-        const regions = this.findSimpleRectangles(edges, width, height, 25);
-        
-        progressCallback?.(90, 'Optimizing results...');
-        await new Promise(resolve => setTimeout(resolve, 50));
-        
-        return regions.slice(0, 12); // Limit to prevent UI overload
+        try {
+            progressCallback?.(20, 'Converting to grayscale...');
+            await new Promise(resolve => setTimeout(resolve, 100));
+            
+            const grayData = this.toGrayscale(imageData);
+            
+            progressCallback?.(50, 'Detecting edges...');
+            await new Promise(resolve => setTimeout(resolve, 150));
+            
+            const threshold = Math.max(30, 200 - sensitivity);
+            const edges = this.detectEdges(grayData, width, height, threshold);
+            
+            progressCallback?.(80, 'Finding regions...');
+            await new Promise(resolve => setTimeout(resolve, 100));
+            
+            const regions = this.findRectangularRegions(edges, width, height);
+            
+            return regions;
+            
+        } catch (error) {
+            console.error('Detection error:', error);
+            throw error;
+        }
     }
 }
 
@@ -199,9 +177,10 @@ const AIEdgeDetection: React.FC<AIEdgeDetectionProps> = ({
     const [progress, setProgress] = useState(0);
     const [sensitivity, setSensitivity] = useState([60]);
     const [processingStage, setProcessingStage] = useState('');
-    const [previewMode, setPreviewMode] = useState(false);
+    const [showPreview, setShowPreview] = useState(false);
     const [previewImage, setPreviewImage] = useState<string | null>(null);
     const [detectedRegions, setDetectedRegions] = useState<Point[][]>([]);
+    const [detectionScale, setDetectionScale] = useState(1);
 
     const processImage = useCallback(async () => {
         if (!image || isProcessing) return;
@@ -210,32 +189,33 @@ const AIEdgeDetection: React.FC<AIEdgeDetectionProps> = ({
         setIsProcessing(true);
         setProgress(0);
         setProcessingStage('Initializing...');
+        setShowPreview(false);
+        setPreviewImage(null);
+        setDetectedRegions([]);
 
         try {
-            // Create optimized canvas - limit size for performance
             const canvas = document.createElement('canvas');
             const ctx = canvas.getContext('2d');
-            if (!ctx) {
-                throw new Error('Canvas context not available');
-            }
+            if (!ctx) throw new Error('Canvas context not available');
 
-            // Optimize dimensions for performance
-            const maxDimension = 800;
+            // Optimize canvas size for performance
+            const maxDimension = 600;
             const scale = Math.min(1, maxDimension / Math.max(image.width, image.height));
+            setDetectionScale(scale);
             
             canvas.width = Math.round(image.width * scale);
             canvas.height = Math.round(image.height * scale);
             
             console.log(`Processing at ${canvas.width}x${canvas.height} (scale: ${scale})`);
 
-            setProgress(5);
+            setProgress(10);
             setProcessingStage('Preparing image...');
+            await new Promise(resolve => setTimeout(resolve, 50));
             
             ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
             const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
 
-            // Use optimized detection
-            const regions = await OptimizedEdgeDetector.detectRegions(
+            const regions = await FastEdgeDetector.detectRegions(
                 imageData,
                 sensitivity[0],
                 (prog, stage) => {
@@ -246,12 +226,12 @@ const AIEdgeDetection: React.FC<AIEdgeDetectionProps> = ({
 
             console.log(`Detected ${regions.length} regions`);
 
-            if (previewMode) {
+            if (regions.length > 0) {
                 // Create preview
                 ctx.strokeStyle = '#00ff88';
                 ctx.lineWidth = 2;
                 ctx.shadowColor = '#00ff88';
-                ctx.shadowBlur = 3;
+                ctx.shadowBlur = 2;
 
                 regions.forEach((region, index) => {
                     if (region.length >= 4) {
@@ -263,10 +243,11 @@ const AIEdgeDetection: React.FC<AIEdgeDetectionProps> = ({
                         ctx.closePath();
                         ctx.stroke();
                         
+                        // Light fill
                         ctx.fillStyle = 'rgba(0, 255, 136, 0.1)';
                         ctx.fill();
                         
-                        // Add region number
+                        // Region number
                         ctx.fillStyle = '#00ff88';
                         ctx.font = '12px Arial';
                         ctx.fillText(`${index + 1}`, region[0].x + 5, region[0].y - 5);
@@ -275,51 +256,23 @@ const AIEdgeDetection: React.FC<AIEdgeDetectionProps> = ({
 
                 setPreviewImage(canvas.toDataURL());
                 setDetectedRegions(regions);
+                setShowPreview(true);
                 setProgress(100);
                 setProcessingStage('Preview ready!');
                 
+                toast({
+                    title: "🎯 Regions Detected!",
+                    description: `Found ${regions.length} regions. Review the preview.`,
+                });
+                
             } else {
-                // Direct application
-                const finalRegions: Region[] = regions
-                    .filter(region => region.length >= 4)
-                    .map((region, index) => ({
-                        id: `ai-region-${Date.now()}-${index}`,
-                        points: region.map(point => ({
-                            x: Math.round(point.x / scale),
-                            y: Math.round(point.y / scale)
-                        })),
-                        outlineColor: '#00ff88',
-                        color: undefined,
-                        filled: false,
-                        type: 'polygon' as const
-                    }));
-
                 setProgress(100);
-                setProcessingStage('Complete!');
-
-                console.log(`Adding ${finalRegions.length} regions to canvas`);
-
-                if (finalRegions.length > 0) {
-                    onRegionsDetected(finalRegions);
-                    
-                    toast({
-                        title: "🤖 AI Detection Successful!",
-                        description: `Found ${finalRegions.length} regions. Ready to colorize!`,
-                    });
-                } else {
-                    toast({
-                        title: "No Regions Found",
-                        description: "Try adjusting sensitivity or use a different image",
-                        variant: "destructive"
-                    });
-                }
-
-                setTimeout(() => {
-                    setIsProcessing(false);
-                    if (finalRegions.length > 0) {
-                        onClose();
-                    }
-                }, 1500);
+                setProcessingStage('No regions found');
+                toast({
+                    title: "No Regions Found",
+                    description: "Try adjusting sensitivity or use a different image",
+                    variant: "destructive"
+                });
             }
 
         } catch (error) {
@@ -329,26 +282,23 @@ const AIEdgeDetection: React.FC<AIEdgeDetectionProps> = ({
                 description: "An error occurred during processing. Please try again.",
                 variant: "destructive"
             });
+        } finally {
             setIsProcessing(false);
-            setProgress(0);
-            setProcessingStage('');
         }
-    }, [image, sensitivity, previewMode, onRegionsDetected, onClose, isProcessing]);
+    }, [image, sensitivity, isProcessing]);
 
     const handleAddToCanvas = useCallback(() => {
-        if (detectedRegions.length === 0) return;
+        if (detectedRegions.length === 0 || !image) return;
         
-        console.log('Adding preview regions to canvas...');
-        
-        const scale = Math.min(1, 800 / Math.max(image?.width || 800, image?.height || 800));
+        console.log('Adding detected regions to canvas...');
         
         const finalRegions: Region[] = detectedRegions
             .filter(region => region.length >= 4)
             .map((region, index) => ({
                 id: `ai-region-${Date.now()}-${index}`,
                 points: region.map(point => ({
-                    x: Math.round(point.x / scale),
-                    y: Math.round(point.y / scale)
+                    x: Math.round(point.x / detectionScale),
+                    y: Math.round(point.y / detectionScale)
                 })),
                 outlineColor: '#00ff88',
                 color: undefined,
@@ -356,23 +306,42 @@ const AIEdgeDetection: React.FC<AIEdgeDetectionProps> = ({
                 type: 'polygon' as const
             }));
 
-        onRegionsDetected(finalRegions);
-        
-        toast({
-            title: "🎯 Regions Added!",
-            description: `Added ${finalRegions.length} regions to your canvas`,
-        });
-        
-        onClose();
-    }, [detectedRegions, image, onRegionsDetected, onClose]);
+        console.log('Final regions to add:', finalRegions);
 
-    const resetPreview = useCallback(() => {
+        if (finalRegions.length > 0) {
+            onRegionsDetected(finalRegions);
+            
+            toast({
+                title: "✅ Regions Added!",
+                description: `Added ${finalRegions.length} regions to your canvas`,
+            });
+            
+            // Reset and close
+            resetState();
+            onClose();
+        }
+    }, [detectedRegions, detectionScale, image, onRegionsDetected, onClose]);
+
+    const resetState = useCallback(() => {
+        setShowPreview(false);
         setPreviewImage(null);
         setDetectedRegions([]);
-        setPreviewMode(false);
+        setProgress(0);
+        setProcessingStage('');
+        setIsProcessing(false);
+    }, []);
+
+    const handleBack = useCallback(() => {
+        setShowPreview(false);
+        setPreviewImage(null);
         setProgress(0);
         setProcessingStage('');
     }, []);
+
+    const handleClose = useCallback(() => {
+        resetState();
+        onClose();
+    }, [resetState, onClose]);
 
     if (!isOpen) return null;
 
@@ -387,7 +356,7 @@ const AIEdgeDetection: React.FC<AIEdgeDetectionProps> = ({
                     <Button 
                         variant="ghost" 
                         size="icon" 
-                        onClick={onClose} 
+                        onClick={handleClose}
                         className="text-zinc-400 hover:text-white"
                         disabled={isProcessing}
                     >
@@ -410,8 +379,8 @@ const AIEdgeDetection: React.FC<AIEdgeDetectionProps> = ({
                         </div>
                     )}
 
-                    {/* Preview Image */}
-                    {previewImage && !isProcessing && (
+                    {/* Preview Mode */}
+                    {showPreview && previewImage && !isProcessing && (
                         <div className="space-y-3">
                             <h4 className="text-sm font-semibold text-white flex items-center gap-2">
                                 <Eye className="h-4 w-4" />
@@ -420,7 +389,7 @@ const AIEdgeDetection: React.FC<AIEdgeDetectionProps> = ({
                             <img
                                 src={previewImage}
                                 alt="Detection Preview"
-                                className="w-full max-h-48 object-contain border border-zinc-700 rounded bg-zinc-800"
+                                className="w-full max-h-64 object-contain border border-zinc-700 rounded bg-zinc-800"
                             />
                             <div className="flex gap-2">
                                 <Button
@@ -433,7 +402,7 @@ const AIEdgeDetection: React.FC<AIEdgeDetectionProps> = ({
                                 </Button>
                                 <Button
                                     variant="outline"
-                                    onClick={resetPreview}
+                                    onClick={handleBack}
                                     className="border-zinc-600 text-white hover:bg-zinc-800"
                                 >
                                     Back
@@ -442,8 +411,8 @@ const AIEdgeDetection: React.FC<AIEdgeDetectionProps> = ({
                         </div>
                     )}
 
-                    {/* Controls - only show when not processing */}
-                    {!isProcessing && !previewImage && (
+                    {/* Controls - only show when not processing and not in preview */}
+                    {!isProcessing && !showPreview && (
                         <>
                             <div className="space-y-3">
                                 <h3 className="text-sm font-semibold text-white">
@@ -458,19 +427,8 @@ const AIEdgeDetection: React.FC<AIEdgeDetectionProps> = ({
                                     className="w-full"
                                 />
                                 <p className="text-xs text-zinc-400">
-                                    Higher values detect more edges (may be slower)
+                                    Higher values detect more edges
                                 </p>
-                            </div>
-
-                            <div className="flex items-center justify-between">
-                                <span className="text-sm font-medium text-white">Preview Mode</span>
-                                <Button
-                                    variant={previewMode ? 'default' : 'outline'}
-                                    size="sm"
-                                    onClick={() => setPreviewMode(!previewMode)}
-                                >
-                                    {previewMode ? 'Preview First' : 'Direct Apply'}
-                                </Button>
                             </div>
 
                             <Button
@@ -479,19 +437,27 @@ const AIEdgeDetection: React.FC<AIEdgeDetectionProps> = ({
                                 className="w-full bg-gradient-to-r from-green-600 to-blue-600 hover:from-green-500 hover:to-blue-500"
                             >
                                 <Bot className="h-4 w-4 mr-2" />
-                                {previewMode ? 'Preview Detection' : 'Detect Regions'}
+                                Detect Regions
                             </Button>
                         </>
                     )}
 
+                    {/* No regions found message */}
+                    {!isProcessing && !showPreview && progress === 100 && detectedRegions.length === 0 && (
+                        <div className="text-center p-6 bg-yellow-900/20 border border-yellow-700/50 rounded-lg">
+                            <h3 className="text-sm font-semibold text-yellow-300 mb-1">No Regions Detected</h3>
+                            <p className="text-xs text-yellow-400">Try adjusting the sensitivity or use a different image</p>
+                        </div>
+                    )}
+
                     {/* Info */}
                     <div className="bg-zinc-800/50 p-3 rounded-lg">
-                        <h4 className="text-sm font-semibold text-green-400 mb-2">⚡ Optimized Detection</h4>
+                        <h4 className="text-sm font-semibold text-green-400 mb-2">⚡ Fast Detection</h4>
                         <ul className="text-xs text-zinc-300 space-y-1">
-                            <li>• <strong>Fast Processing:</strong> Optimized algorithms for better performance</li>
-                            <li>• <strong>Smart Sizing:</strong> Automatic image scaling for speed</li>
-                            <li>• <strong>Memory Efficient:</strong> Reduced memory usage during processing</li>
-                            <li>• <strong>Quality Results:</strong> Focused on rectangular regions like windows/doors</li>
+                            <li>• <strong>Optimized Processing:</strong> Faster algorithms with preview</li>
+                            <li>• <strong>Smart Scaling:</strong> Automatic image resizing for speed</li>
+                            <li>• <strong>Rectangular Focus:</strong> Detects windows, doors, and similar shapes</li>
+                            <li>• <strong>Preview First:</strong> Review before adding to canvas</li>
                         </ul>
                     </div>
                 </div>

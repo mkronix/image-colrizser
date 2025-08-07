@@ -27,7 +27,7 @@ interface OptimizationSuggestion {
     confidence: number;
     preview: Point[];
     originalPoints: Point[];
-    improvement: string; // What changed
+    improvement: string;
 }
 
 interface AIOutlineOptimizerProps {
@@ -37,27 +37,24 @@ interface AIOutlineOptimizerProps {
     onOptimizationApplied: (optimizedRegion: Region) => void;
 }
 
-class EnhancedOutlineOptimizer {
-    // More aggressive smoothing for visible results
-    static smoothPath(points: Point[], intensity: number = 0.7): Point[] {
+class OutlineOptimizer {
+    static smoothPath(points: Point[], intensity: number = 0.8): Point[] {
         if (points.length < 4) return points;
 
         const smoothed: Point[] = [points[0]];
-        const segments = Math.max(2, Math.floor(points.length / 8)); // More aggressive
 
         for (let i = 1; i < points.length - 1; i++) {
             const prev = points[Math.max(0, i - 1)];
             const curr = points[i];
             const next = points[Math.min(points.length - 1, i + 1)];
-            const next2 = points[Math.min(points.length - 1, i + 2)];
 
-            // Apply stronger smoothing
-            const smoothX = (prev.x + curr.x * 2 + next.x + next2.x * 0.5) / 4.5;
-            const smoothY = (prev.y + curr.y * 2 + next.y + next2.y * 0.5) / 4.5;
+            // Stronger smoothing
+            const smoothX = (prev.x + curr.x * 2 + next.x) / 4;
+            const smoothY = (prev.y + curr.y * 2 + next.y) / 4;
 
             smoothed.push({
-                x: curr.x + (smoothX - curr.x) * intensity,
-                y: curr.y + (smoothY - curr.y) * intensity
+                x: Math.round(curr.x + (smoothX - curr.x) * intensity),
+                y: Math.round(curr.y + (smoothY - curr.y) * intensity)
             });
         }
 
@@ -65,14 +62,13 @@ class EnhancedOutlineOptimizer {
         return smoothed;
     }
 
-    // More aggressive simplification
-    static simplifyPath(points: Point[], epsilon: number = 5): Point[] {
+    static simplifyPath(points: Point[], epsilon: number = 6): Point[] {
         if (points.length < 4) return points;
         
         const simplified = this.douglasPeucker(points, epsilon);
         
-        // Ensure significant reduction
-        if (simplified.length > points.length * 0.7) {
+        // Ensure significant reduction for visible change
+        if (simplified.length > points.length * 0.6) {
             return this.douglasPeucker(points, epsilon * 1.5);
         }
         
@@ -134,8 +130,7 @@ class EnhancedOutlineOptimizer {
         return Math.sqrt(dx * dx + dy * dy);
     }
 
-    // Smart auto-closure
-    static autoClosePath(points: Point[], threshold: number = 25): Point[] {
+    static autoClosePath(points: Point[], threshold: number = 30): Point[] {
         if (points.length < 3) return points;
 
         const first = points[0];
@@ -144,62 +139,35 @@ class EnhancedOutlineOptimizer {
             Math.pow(first.x - last.x, 2) + Math.pow(first.y - last.y, 2)
         );
 
-        if (distance <= threshold && distance > 3) {
-            const closedPoints = [...points.slice(0, -1)];
-            // Add smooth transition to closure
-            const midX = (first.x + last.x) / 2;
-            const midY = (first.y + last.y) / 2;
-            closedPoints.push({ x: midX, y: midY });
-            closedPoints.push(first);
-            return closedPoints;
+        if (distance <= threshold && distance > 5) {
+            return [...points.slice(0, -1), first];
         }
 
         return points;
     }
 
-    // Enhanced alignment with visible changes
-    static alignPath(points: Point[], gridSize: number = 15): Point[] {
+    static alignPath(points: Point[], gridSize: number = 20): Point[] {
         if (points.length < 2) return points;
 
-        const aligned: Point[] = [];
+        return points.map((point, i) => {
+            let x = Math.round(point.x / gridSize) * gridSize;
+            let y = Math.round(point.y / gridSize) * gridSize;
 
-        for (let i = 0; i < points.length; i++) {
-            const current = points[i];
-            
-            // Snap to grid
-            let x = Math.round(current.x / gridSize) * gridSize;
-            let y = Math.round(current.y / gridSize) * gridSize;
-
-            // Additional alignment logic
+            // Additional alignment for straight lines
             if (i > 0) {
-                const prev = aligned[aligned.length - 1];
-                const dx = x - prev.x;
-                const dy = y - prev.y;
-                const distance = Math.sqrt(dx * dx + dy * dy);
+                const prev = points[i - 1];
+                const dx = Math.abs(x - prev.x);
+                const dy = Math.abs(y - prev.y);
 
-                if (distance > 10) {
-                    // Snap to 45-degree angles for visible change
-                    const angle = Math.atan2(dy, dx) * 180 / Math.PI;
-                    const snapAngles = [0, 45, 90, 135, 180, -45, -90, -135];
-                    const nearest = snapAngles.reduce((closest, snapAngle) => {
-                        return Math.abs(angle - snapAngle) < Math.abs(angle - closest) ? snapAngle : closest;
-                    });
-
-                    if (Math.abs(angle - nearest) < 20) {
-                        const radians = nearest * Math.PI / 180;
-                        x = prev.x + distance * Math.cos(radians);
-                        y = prev.y + distance * Math.sin(radians);
-                    }
-                }
+                // Snap to horizontal/vertical lines
+                if (dx < gridSize / 2) x = prev.x;
+                if (dy < gridSize / 2) y = prev.y;
             }
 
-            aligned.push({ x: Math.round(x), y: Math.round(y) });
-        }
-
-        return aligned;
+            return { x: Math.round(x), y: Math.round(y) };
+        });
     }
 
-    // Enhanced analysis with better suggestions
     static analyzePath(points: Point[]): OptimizationSuggestion[] {
         const suggestions: OptimizationSuggestion[] = [];
 
@@ -207,13 +175,13 @@ class EnhancedOutlineOptimizer {
 
         // Check for jaggedness
         const jaggedness = this.calculateJaggedness(points);
-        if (jaggedness > 0.25) {
-            const smoothed = this.smoothPath(points, 0.7);
+        if (jaggedness > 0.3) {
+            const smoothed = this.smoothPath(points, 0.8);
             suggestions.push({
                 type: 'smoothing',
                 title: 'Smooth Jagged Lines',
-                description: 'Make your outline smoother and more natural',
-                confidence: Math.min(jaggedness * 120, 95),
+                description: 'Remove rough edges and make lines smoother',
+                confidence: Math.min(jaggedness * 150, 95),
                 preview: smoothed,
                 originalPoints: points,
                 improvement: `Reduced jaggedness by ${Math.round(jaggedness * 100)}%`
@@ -221,15 +189,15 @@ class EnhancedOutlineOptimizer {
         }
 
         // Check for complexity
-        if (points.length > 20) {
-            const simplified = this.simplifyPath(points, 4);
+        if (points.length > 15) {
+            const simplified = this.simplifyPath(points, 5);
             const reduction = Math.round((1 - simplified.length / points.length) * 100);
-            if (reduction > 15) {
+            if (reduction > 20) {
                 suggestions.push({
                     type: 'simplification',
                     title: 'Reduce Complexity',
-                    description: 'Simplify while preserving shape',
-                    confidence: Math.min(reduction * 2, 90),
+                    description: 'Simplify outline while preserving shape',
+                    confidence: Math.min(reduction * 1.5, 90),
                     preview: simplified,
                     originalPoints: points,
                     improvement: `Reduced points by ${reduction}% (${points.length} → ${simplified.length})`
@@ -244,28 +212,28 @@ class EnhancedOutlineOptimizer {
             Math.pow(first.x - last.x, 2) + Math.pow(first.y - last.y, 2)
         );
 
-        if (closureDistance < 40 && closureDistance > 8) {
-            const closed = this.autoClosePath(points, 30);
+        if (closureDistance < 50 && closureDistance > 8) {
+            const closed = this.autoClosePath(points, 35);
             suggestions.push({
                 type: 'closure',
                 title: 'Close Shape',
-                description: 'Automatically close the outline',
-                confidence: Math.max(60, 100 - (closureDistance * 2)),
+                description: 'Automatically close the outline gap',
+                confidence: Math.max(65, 100 - (closureDistance * 2)),
                 preview: closed,
                 originalPoints: points,
                 improvement: `Closed gap of ${Math.round(closureDistance)}px`
             });
         }
 
-        // Check for alignment opportunities
+        // Check for alignment
         const alignmentScore = this.calculateAlignmentScore(points);
-        if (alignmentScore < 0.8 && points.length > 8) {
-            const aligned = this.alignPath(points, 12);
+        if (alignmentScore < 0.7 && points.length > 6) {
+            const aligned = this.alignPath(points, 15);
             suggestions.push({
                 type: 'alignment',
                 title: 'Improve Alignment',
-                description: 'Align to grid and common angles',
-                confidence: (1 - alignmentScore) * 85,
+                description: 'Align to grid and straighten lines',
+                confidence: (1 - alignmentScore) * 80,
                 preview: aligned,
                 originalPoints: points,
                 improvement: `Improved alignment by ${Math.round((1 - alignmentScore) * 100)}%`
@@ -304,18 +272,15 @@ class EnhancedOutlineOptimizer {
 
         let alignedSegments = 0;
         const totalSegments = points.length - 1;
-        const commonAngles = [0, 45, 90, 135, 180, 225, 270, 315];
 
         for (let i = 1; i < points.length; i++) {
-            const dx = points[i].x - points[i - 1].x;
-            const dy = points[i].y - points[i - 1].y;
-            const angle = Math.atan2(dy, dx) * 180 / Math.PI;
-
-            const isAligned = commonAngles.some(commonAngle =>
-                Math.abs(angle - commonAngle) < 20 || Math.abs(angle - commonAngle + 360) < 20
-            );
-
-            if (isAligned) alignedSegments++;
+            const dx = Math.abs(points[i].x - points[i - 1].x);
+            const dy = Math.abs(points[i].y - points[i - 1].y);
+            
+            // Check if segment is roughly horizontal or vertical
+            if (dx < 5 || dy < 5 || Math.abs(dx - dy) < 5) {
+                alignedSegments++;
+            }
         }
 
         return alignedSegments / totalSegments;
@@ -331,7 +296,7 @@ const AIOutlineOptimizer: React.FC<AIOutlineOptimizerProps> = ({
     const [suggestions, setSuggestions] = useState<OptimizationSuggestion[]>([]);
     const [selectedSuggestions, setSelectedSuggestions] = useState<Set<number>>(new Set());
     const [isAnalyzing, setIsAnalyzing] = useState(false);
-    const [previewMode, setPreviewMode] = useState(false);
+    const [showPreview, setShowPreview] = useState(false);
     const [previewPoints, setPreviewPoints] = useState<Point[] | null>(null);
 
     const analyzePath = useCallback(async () => {
@@ -341,12 +306,14 @@ const AIOutlineOptimizer: React.FC<AIOutlineOptimizerProps> = ({
         setIsAnalyzing(true);
         setSuggestions([]);
         setSelectedSuggestions(new Set());
-
-        // Simulate analysis with visual feedback
-        await new Promise(resolve => setTimeout(resolve, 600));
+        setShowPreview(false);
+        setPreviewPoints(null);
 
         try {
-            const pathSuggestions = EnhancedOutlineOptimizer.analyzePath(region.points);
+            // Add delay for UI feedback
+            await new Promise(resolve => setTimeout(resolve, 800));
+
+            const pathSuggestions = OutlineOptimizer.analyzePath(region.points);
             setSuggestions(pathSuggestions);
 
             if (pathSuggestions.length > 0) {
@@ -354,7 +321,7 @@ const AIOutlineOptimizer: React.FC<AIOutlineOptimizerProps> = ({
                 setSelectedSuggestions(new Set([0]));
                 
                 toast({
-                    title: "🤖 AI Analysis Complete!",
+                    title: "🤖 Analysis Complete!",
                     description: `Found ${pathSuggestions.length} optimization opportunities`,
                 });
             } else {
@@ -370,9 +337,9 @@ const AIOutlineOptimizer: React.FC<AIOutlineOptimizerProps> = ({
                 description: "Please try again with the outline",
                 variant: "destructive"
             });
+        } finally {
+            setIsAnalyzing(false);
         }
-
-        setIsAnalyzing(false);
     }, [region]);
 
     const toggleSuggestion = useCallback((index: number) => {
@@ -387,13 +354,12 @@ const AIOutlineOptimizer: React.FC<AIOutlineOptimizerProps> = ({
         });
     }, []);
 
-    const previewOptimizations = useCallback(() => {
+    const generatePreview = useCallback(() => {
         if (!region || selectedSuggestions.size === 0) return;
 
         let optimizedPoints = [...region.points];
-        let appliedOptimizations: string[] = [];
 
-        // Apply selected optimizations
+        // Apply selected optimizations in order of confidence
         const sortedIndices = Array.from(selectedSuggestions).sort((a, b) => 
             suggestions[b].confidence - suggestions[a].confidence
         );
@@ -401,33 +367,34 @@ const AIOutlineOptimizer: React.FC<AIOutlineOptimizerProps> = ({
         for (const index of sortedIndices) {
             const suggestion = suggestions[index];
             optimizedPoints = suggestion.preview;
-            appliedOptimizations.push(suggestion.title);
         }
 
         setPreviewPoints(optimizedPoints);
-        setPreviewMode(true);
+        setShowPreview(true);
 
+        const appliedOptimizations = sortedIndices.map(i => suggestions[i].title);
         toast({
             title: "👁️ Preview Generated",
             description: `Showing: ${appliedOptimizations.join(', ')}`,
         });
     }, [region, selectedSuggestions, suggestions]);
 
-    const applyOptimizations = useCallback((fromPreview = false) => {
+    const applyOptimizations = useCallback((usePreview = false) => {
         if (!region) return;
         
-        const finalPoints = fromPreview && previewPoints ? previewPoints : 
-            selectedSuggestions.size > 0 ? (() => {
-                let optimizedPoints = [...region.points];
-                const sortedIndices = Array.from(selectedSuggestions).sort((a, b) => 
-                    suggestions[b].confidence - suggestions[a].confidence
-                );
-                
-                for (const index of sortedIndices) {
-                    optimizedPoints = suggestions[index].preview;
-                }
-                return optimizedPoints;
-            })() : region.points;
+        const finalPoints = usePreview && previewPoints ? previewPoints : (() => {
+            if (selectedSuggestions.size === 0) return region.points;
+            
+            let optimizedPoints = [...region.points];
+            const sortedIndices = Array.from(selectedSuggestions).sort((a, b) => 
+                suggestions[b].confidence - suggestions[a].confidence
+            );
+            
+            for (const index of sortedIndices) {
+                optimizedPoints = suggestions[index].preview;
+            }
+            return optimizedPoints;
+        })();
 
         const optimizedRegion: Region = {
             ...region,
@@ -447,8 +414,28 @@ const AIOutlineOptimizer: React.FC<AIOutlineOptimizerProps> = ({
             description: `Your outline has been enhanced and updated`,
         });
 
+        // Reset state and close
+        resetState();
         onClose();
     }, [region, selectedSuggestions, suggestions, previewPoints, onOptimizationApplied, onClose]);
+
+    const resetState = useCallback(() => {
+        setSuggestions([]);
+        setSelectedSuggestions(new Set());
+        setShowPreview(false);
+        setPreviewPoints(null);
+        setIsAnalyzing(false);
+    }, []);
+
+    const handleClose = useCallback(() => {
+        resetState();
+        onClose();
+    }, [resetState, onClose]);
+
+    const handleBack = useCallback(() => {
+        setShowPreview(false);
+        setPreviewPoints(null);
+    }, []);
 
     // Auto-analyze when region changes
     React.useEffect(() => {
@@ -467,7 +454,13 @@ const AIOutlineOptimizer: React.FC<AIOutlineOptimizerProps> = ({
                         <Bot className="h-5 w-5 text-blue-400" />
                         AI Outline Optimizer
                     </h2>
-                    <Button variant="ghost" size="icon" onClick={onClose} className="text-zinc-400 hover:text-white">
+                    <Button 
+                        variant="ghost" 
+                        size="icon" 
+                        onClick={handleClose} 
+                        className="text-zinc-400 hover:text-white"
+                        disabled={isAnalyzing}
+                    >
                         <X className="h-4 w-4" />
                     </Button>
                 </div>
@@ -479,13 +472,13 @@ const AIOutlineOptimizer: React.FC<AIOutlineOptimizerProps> = ({
                             <div className="animate-spin h-5 w-5 border-2 border-blue-400 border-t-transparent rounded-full" />
                             <div>
                                 <p className="text-sm font-medium text-blue-300">Analyzing your outline...</p>
-                                <p className="text-xs text-blue-400">Checking for smoothness, complexity, and alignment</p>
+                                <p className="text-xs text-blue-400">Checking for improvements...</p>
                             </div>
                         </div>
                     )}
 
                     {/* Preview Mode */}
-                    {previewMode && previewPoints && (
+                    {showPreview && previewPoints && !isAnalyzing && (
                         <div className="bg-green-900/20 border border-green-700/50 rounded-lg p-3">
                             <h4 className="text-sm font-semibold text-green-300 mb-2 flex items-center gap-2">
                                 <Eye className="h-4 w-4" />
@@ -506,10 +499,7 @@ const AIOutlineOptimizer: React.FC<AIOutlineOptimizerProps> = ({
                                 </Button>
                                 <Button
                                     variant="outline"
-                                    onClick={() => {
-                                        setPreviewMode(false);
-                                        setPreviewPoints(null);
-                                    }}
+                                    onClick={handleBack}
                                     className="border-zinc-600 text-white hover:bg-zinc-800"
                                 >
                                     Back
@@ -519,7 +509,7 @@ const AIOutlineOptimizer: React.FC<AIOutlineOptimizerProps> = ({
                     )}
 
                     {/* Suggestions */}
-                    {!isAnalyzing && !previewMode && suggestions.length > 0 && (
+                    {!isAnalyzing && !showPreview && suggestions.length > 0 && (
                         <div className="space-y-3">
                             <h3 className="text-sm font-semibold text-white flex items-center gap-2">
                                 <Zap className="h-4 w-4 text-green-400" />
@@ -566,7 +556,7 @@ const AIOutlineOptimizer: React.FC<AIOutlineOptimizerProps> = ({
                     )}
 
                     {/* No Suggestions */}
-                    {!isAnalyzing && !previewMode && suggestions.length === 0 && (
+                    {!isAnalyzing && !showPreview && suggestions.length === 0 && (
                         <div className="text-center p-6 bg-green-900/20 border border-green-700/50 rounded-lg">
                             <CheckCircle className="h-8 w-8 text-green-400 mx-auto mb-2" />
                             <h3 className="text-sm font-semibold text-green-300 mb-1">Outline Already Optimized!</h3>
@@ -575,10 +565,10 @@ const AIOutlineOptimizer: React.FC<AIOutlineOptimizerProps> = ({
                     )}
 
                     {/* Action Buttons */}
-                    {!previewMode && suggestions.length > 0 && selectedSuggestions.size > 0 && (
+                    {!showPreview && !isAnalyzing && suggestions.length > 0 && selectedSuggestions.size > 0 && (
                         <div className="flex gap-3 pt-2">
                             <Button
-                                onClick={previewOptimizations}
+                                onClick={generatePreview}
                                 className="flex-1 bg-blue-600 hover:bg-blue-500"
                             >
                                 <Eye className="h-4 w-4 mr-2" />
@@ -595,24 +585,26 @@ const AIOutlineOptimizer: React.FC<AIOutlineOptimizerProps> = ({
                     )}
 
                     {/* Close Button */}
-                    <div className="flex justify-center pt-2">
-                        <Button
-                            variant="ghost"
-                            onClick={onClose}
-                            className="text-zinc-400 hover:text-white"
-                        >
-                            Close
-                        </Button>
-                    </div>
+                    {!isAnalyzing && (
+                        <div className="flex justify-center pt-2">
+                            <Button
+                                variant="ghost"
+                                onClick={handleClose}
+                                className="text-zinc-400 hover:text-white"
+                            >
+                                Close
+                            </Button>
+                        </div>
+                    )}
 
-                    {/* Enhanced Tips */}
+                    {/* Tips */}
                     <div className="bg-zinc-800/50 p-3 rounded-lg">
-                        <h4 className="text-sm font-semibold text-blue-400 mb-2">💡 What's New</h4>
+                        <h4 className="text-sm font-semibold text-blue-400 mb-2">💡 Enhanced Optimizer</h4>
                         <ul className="text-xs text-zinc-300 space-y-1">
-                            <li>• <strong>Better Results:</strong> More visible and effective optimizations</li>
-                            <li>• <strong>Preview Mode:</strong> See changes before applying them</li>
-                            <li>• <strong>Smart Analysis:</strong> Enhanced detection of improvement opportunities</li>
-                            <li>• <strong>Detailed Stats:</strong> Clear metrics showing exactly what changed</li>
+                            <li>• <strong>Visible Results:</strong> More aggressive optimizations for clear changes</li>
+                            <li>• <strong>Preview Mode:</strong> See exactly what will change before applying</li>
+                            <li>• <strong>Smart Analysis:</strong> Better detection of improvement opportunities</li>
+                            <li>• <strong>Detailed Metrics:</strong> Clear statistics on what changed</li>
                         </ul>
                     </div>
                 </div>
