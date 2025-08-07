@@ -72,7 +72,8 @@ const ImageCanvas: React.FC<ImageCanvasProps> = ({
 
     // Draw filled regions with better blending
     regions.forEach(region => {
-      if (region.filled && region.points.length > 0) {
+      if (region.filled && region.points.length > 0 && region.color) {
+        console.log('Drawing filled region:', region.id, 'with color:', region.color);
         ctx.save();
         
         // Create clipping path for the region
@@ -91,23 +92,21 @@ const ImageCanvas: React.FC<ImageCanvasProps> = ({
         ctx.clip();
 
         // Create a semi-transparent overlay for better blending
-        if (region.color) {
-          const color = region.color;
-          // Convert hex to rgba for blending
-          const r = parseInt(color.slice(1, 3), 16);
-          const g = parseInt(color.slice(3, 5), 16);
-          const b = parseInt(color.slice(5, 7), 16);
-          
-          // Apply color with multiply blend mode for better integration
-          ctx.globalCompositeOperation = 'multiply';
-          ctx.fillStyle = `rgba(${r}, ${g}, ${b}, 0.7)`;
-          ctx.fillRect(0, 0, canvas.width, canvas.height);
-          
-          // Add a subtle color overlay
-          ctx.globalCompositeOperation = 'overlay';
-          ctx.fillStyle = `rgba(${r}, ${g}, ${b}, 0.3)`;
-          ctx.fillRect(0, 0, canvas.width, canvas.height);
-        }
+        const color = region.color;
+        // Convert hex to rgba for blending
+        const r = parseInt(color.slice(1, 3), 16);
+        const g = parseInt(color.slice(3, 5), 16);
+        const b = parseInt(color.slice(5, 7), 16);
+        
+        // Apply color with multiply blend mode for better integration
+        ctx.globalCompositeOperation = 'multiply';
+        ctx.fillStyle = `rgba(${r}, ${g}, ${b}, 0.7)`;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        
+        // Add a subtle color overlay
+        ctx.globalCompositeOperation = 'overlay';
+        ctx.fillStyle = `rgba(${r}, ${g}, ${b}, 0.3)`;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
 
         ctx.restore();
       }
@@ -199,6 +198,7 @@ const ImageCanvas: React.FC<ImageCanvasProps> = ({
 
   const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const pos = getMousePos(e);
+    console.log('Mouse down at:', pos, 'Current tool:', currentTool);
 
     if (currentTool === 'pen') {
       setIsDrawing(true);
@@ -217,15 +217,19 @@ const ImageCanvas: React.FC<ImageCanvasProps> = ({
     } else if (currentTool === 'fill' || currentTool === 'select') {
       // Find region at click point
       const clickedRegion = regions.find(region => isPointInRegion(pos, region));
+      console.log('Clicked region:', clickedRegion, 'Available regions:', regions.length);
 
       if (clickedRegion) {
         if (currentTool === 'fill') {
+          console.log('Filling region with color:', selectedColor);
           // Update region with current color
           const updatedRegion = { ...clickedRegion, color: selectedColor, filled: true };
           onRegionCreated(updatedRegion);
         } else {
           onRegionSelected(clickedRegion);
         }
+      } else {
+        console.log('No region found at click position');
       }
     }
   };
