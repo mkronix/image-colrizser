@@ -1,5 +1,7 @@
 
 import { pipeline, env } from '@huggingface/transformers';
+import { maskToPolygon } from '@/lib/geometry/contours';
+import { extractBestBinaryMaskFromSegments } from '@/lib/ai/maskUtils';
 
 // Configure transformers.js
 env.allowLocalModels = false;
@@ -139,36 +141,82 @@ export async function detectObjectsInCanvas(
   onProgress?.(70, 'Processing detections...');
 
   // Filter and process detections
-  const regions = detections
-    .filter((det: any) => det.score > 0.3) // Only keep confident detections
-    .map((det: any, index: number) => {
+  const filtered = detections
+    .filter((det: any) => det.score > 0.3)
+    .slice(0, 20);
+
+  onProgress?.(70, 'Refining object outlines...');
+  const segmenter = await ensureSegmenter((s) => onProgress?.(75, s));
+
+  const regions = await Promise.all(
+    filtered.map(async (det: any, index: number) => {
       // Scale coordinates back to original canvas size
       const scaleX = canvas.width / targetW;
       const scaleY = canvas.height / targetH;
-      
+
       const scaledBox = {
         xmin: det.box.xmin * scaleX,
         ymin: det.box.ymin * scaleY,
         xmax: det.box.xmax * scaleX,
-        ymax: det.box.ymax * scaleY
+        ymax: det.box.ymax * scaleY,
       };
 
-      const points = [
-        { x: Math.round(scaledBox.xmin), y: Math.round(scaledBox.ymin) },
-        { x: Math.round(scaledBox.xmax), y: Math.round(scaledBox.ymin) },
-        { x: Math.round(scaledBox.xmax), y: Math.round(scaledBox.ymax) },
-        { x: Math.round(scaledBox.xmin), y: Math.round(scaledBox.ymax) }
-      ];
+      const x = Math.max(0, Math.floor(scaledBox.xmin));
+      const y = Math.max(0, Math.floor(scaledBox.ymin));
+      const w = Math.max(1, Math.min(canvas.width - x, Math.ceil(scaledBox.xmax) - x));
+      const h = Math.max(1, Math.min(canvas.height - y, Math.ceil(scaledBox.ymax) - y));
+
+      let points: { x: number; y: number }[];
+      try {
+        const crop = document.createElement('canvas');
+        crop.width = Math.max(8, w);
+        crop.height = Math.max(8, h);
+        const cctx = crop.getContext('2d');
+        if (!cctx) throw new Error('No 2D context');
+        cctx.drawImage(canvas, x, y, w, h, 0, 0, w, h);
+        const cropUrl = crop.toDataURL('image/jpeg', 0.9);
+        const segOut = await segmenter(cropUrl);
+        const mask = await extractBestBinaryMaskFromSegments(segOut, w, h);
+
+        if (mask) {
+          const poly = maskToPolygon(mask, w, h, 2);
+          if (poly.length >= 3) {
+            points = poly.map((p) => ({ x: Math.round(p.x + x), y: Math.round(p.y + y) }));
+          } else {
+            points = [
+              { x: Math.round(scaledBox.xmin), y: Math.round(scaledBox.ymin) },
+              { x: Math.round(scaledBox.xmax), y: Math.round(scaledBox.ymin) },
+              { x: Math.round(scaledBox.xmax), y: Math.round(scaledBox.ymax) },
+              { x: Math.round(scaledBox.xmin), y: Math.round(scaledBox.ymax) },
+            ];
+          }
+        } else {
+          points = [
+            { x: Math.round(scaledBox.xmin), y: Math.round(scaledBox.ymin) },
+            { x: Math.round(scaledBox.xmax), y: Math.round(scaledBox.ymin) },
+            { x: Math.round(scaledBox.xmax), y: Math.round(scaledBox.ymax) },
+            { x: Math.round(scaledBox.xmin), y: Math.round(scaledBox.ymax) },
+          ];
+        }
+      } catch (e) {
+        console.warn('Segmentation refinement failed for detection', index, e);
+        points = [
+          { x: Math.round(scaledBox.xmin), y: Math.round(scaledBox.ymin) },
+          { x: Math.round(scaledBox.xmax), y: Math.round(scaledBox.ymin) },
+          { x: Math.round(scaledBox.xmax), y: Math.round(scaledBox.ymax) },
+          { x: Math.round(scaledBox.xmin), y: Math.round(scaledBox.ymax) },
+        ];
+      }
 
       return {
         id: `detected-${Date.now()}-${index}`,
         points,
         label: det.label || 'object',
         confidence: det.score,
-        type: 'polygon' as const
+        type: 'polygon' as const,
       };
     })
-    .slice(0, 20); // Limit to 20 objects max
+  );
 
   onProgress?.(90, `Found ${regions.length} objects`);
 

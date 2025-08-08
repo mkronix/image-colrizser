@@ -367,6 +367,25 @@ const ImageCanvas: React.FC<ImageCanvasProps> = ({
     handleEnd(e.nativeEvent);
   }, [handleEnd, isMobile]);
 
+  // Double-click handler to finalize polygon
+  const handleDoubleClick = useCallback(() => {
+    if (currentTool === 'polygon' && isDrawing && polygonPoints.length > 2) {
+      const newRegion: Region = {
+        id: `region-${Date.now()}`,
+        points: [...polygonPoints],
+        outlineColor: selectedOutlineColor,
+        filled: false,
+        type: 'polygon',
+      };
+      onRegionCreated(newRegion);
+      setIsDrawing(false);
+      setPolygonPoints([]);
+      setCurrentPath([]);
+      setLastClickTime(0);
+      setLastClickPos(null);
+    }
+  }, [currentTool, isDrawing, polygonPoints, selectedOutlineColor, onRegionCreated]);
+
   // Touch event handlers
   const handleTouchStart = useCallback((e: React.TouchEvent<HTMLCanvasElement>) => {
     handleStart(e.nativeEvent);
@@ -432,6 +451,7 @@ const ImageCanvas: React.FC<ImageCanvasProps> = ({
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
+        onDoubleClick={handleDoubleClick}
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
