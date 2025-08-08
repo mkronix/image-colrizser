@@ -255,6 +255,11 @@ class SAM2ImageSegmentation {
             onProgress?.({ status: 'Complete!', progress: 100 });
 
             return results;
+        } catch (error) {
+            console.error('Automatic segmentation failed:', error);
+            throw error;
+        }
+    }
 
     // Convert mask data to polygon points
     maskToPolygon(maskData: Float32Array, width: number, height: number, threshold: number = 0.5): Point[] {
