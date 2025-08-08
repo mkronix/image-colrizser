@@ -1,6 +1,6 @@
 // src/lib/ai/sam2-segmentation.ts
 
-import { AutoModel, AutoProcessor, RawImage } from '@huggingface/transformers';
+import { SamModel, AutoProcessor, RawImage } from '@huggingface/transformers';
 
 interface Point {
     x: number;
@@ -44,7 +44,12 @@ class SAM2ImageSegmentation {
     private processor: any = null;
     private isLoading: boolean = false;
     private isInitialized: boolean = false;
-    private readonly modelId: string = 'facebook/sam2-hiera-tiny';
+    private modelIdUsed: string | null = null;
+    private readonly modelCandidates: string[] = [
+        'Xenova/slimsam-77-uniform',
+        'Xenova/mobile-sam',
+        'Xenova/segment-anything'
+    ];
 
     async initialize(onProgress?: (progress: ProgressCallback) => void): Promise<void> {
         if (this.isInitialized) return;
@@ -52,24 +57,28 @@ class SAM2ImageSegmentation {
 
         this.isLoading = true;
 
+        const tried: string[] = [];
         try {
-            onProgress?.({ status: 'Loading SAM2 model...', progress: 10 });
-
-            // Load model and processor
-            this.model = await AutoModel.from_pretrained(this.modelId, {
-                device: 'webgpu',
-                dtype: 'fp16',
-            });
-
-            onProgress?.({ status: 'Loading processor...', progress: 70 });
-
-            this.processor = await AutoProcessor.from_pretrained(this.modelId);
-
-            onProgress?.({ status: 'Model ready!', progress: 100 });
-
-            this.isInitialized = true;
+            for (const candidate of this.modelCandidates) {
+                try {
+                    onProgress?.({ status: `Loading model ${candidate}...`, progress: 10 });
+                    this.model = await SamModel.from_pretrained(candidate, {
+                        device: 'webgpu',
+                    });
+                    onProgress?.({ status: 'Loading processor...', progress: 70 });
+                    this.processor = await AutoProcessor.from_pretrained(candidate);
+                    this.modelIdUsed = candidate;
+                    this.isInitialized = true;
+                    onProgress?.({ status: 'Model ready!', progress: 100 });
+                    return;
+                } catch (err) {
+                    tried.push(candidate);
+                    // Try next candidate
+                }
+            }
+            throw new Error(`Could not load any SAM model. Tried: ${tried.join(', ')}`);
         } catch (error) {
-            console.error('Failed to initialize SAM2:', error);
+            console.error('Failed to initialize SAM/SAM2:', error);
             throw error;
         } finally {
             this.isLoading = false;
@@ -101,18 +110,32 @@ class SAM2ImageSegmentation {
             });
 
             // Run inference
-            const { pred_masks, iou_scores } = await this.model(inputs);
+            const outputs = await this.model(inputs);
 
-            // Process results
-            const masks = pred_masks.sigmoid();
-            const mask = masks[0][0]; // Get the first mask
+            // Post-process masks to image size
+            const masks = await this.processor.post_process_masks(
+                outputs.pred_masks,
+                inputs.original_sizes,
+                inputs.reshaped_input_sizes
+            );
+
+            const scores = outputs.iou_scores.data as Float32Array;
+            let bestIdx = 0;
+            for (let i = 1; i < scores.length; i++) if (scores[i] > scores[bestIdx]) bestIdx = i;
+
+            const bestMask: any = (masks as any)[0][bestIdx];
+            const w = bestMask.dims[1];
+            const h = bestMask.dims[0];
+            const data = bestMask.data as Uint8Array;
+            const mask = new Float32Array(data.length);
+            for (let i = 0; i < data.length; i++) mask[i] = data[i] ? 1 : 0;
 
             return {
-                mask: mask.data as Float32Array,
-                width: mask.dims[1],
-                height: mask.dims[0],
-                iouScore: iou_scores.data[0],
-                confidence: iou_scores.data[0]
+                mask,
+                width: w,
+                height: h,
+                iouScore: scores[bestIdx],
+                confidence: scores[bestIdx]
             };
         } catch (error) {
             console.error('Segmentation failed:', error);
@@ -133,16 +156,30 @@ class SAM2ImageSegmentation {
                 input_boxes: [[box]]
             });
 
-            const { pred_masks, iou_scores } = await this.model(inputs);
-            const masks = pred_masks.sigmoid();
-            const mask = masks[0][0];
+            const outputs = await this.model(inputs);
+            const masks = await this.processor.post_process_masks(
+                outputs.pred_masks,
+                inputs.original_sizes,
+                inputs.reshaped_input_sizes
+            );
+
+            const scores = outputs.iou_scores.data as Float32Array;
+            let bestIdx = 0;
+            for (let i = 1; i < scores.length; i++) if (scores[i] > scores[bestIdx]) bestIdx = i;
+
+            const bestMask: any = (masks as any)[0][bestIdx];
+            const w = bestMask.dims[1];
+            const h = bestMask.dims[0];
+            const data = bestMask.data as Uint8Array;
+            const mask = new Float32Array(data.length);
+            for (let i = 0; i < data.length; i++) mask[i] = data[i] ? 1 : 0;
 
             return {
-                mask: mask.data as Float32Array,
-                width: mask.dims[1],
-                height: mask.dims[0],
-                iouScore: iou_scores.data[0],
-                confidence: iou_scores.data[0]
+                mask,
+                width: w,
+                height: h,
+                iouScore: scores[bestIdx],
+                confidence: scores[bestIdx]
             };
         } catch (error) {
             console.error('Box segmentation failed:', error);
@@ -184,24 +221,33 @@ class SAM2ImageSegmentation {
 
             onProgress?.({ status: 'Running segmentation...', progress: 80 });
 
-            const { pred_masks, iou_scores } = await this.model(inputs);
-            const masks = pred_masks.sigmoid();
+            const outputs = await this.model(inputs);
+            const masksOut: any = await this.processor.post_process_masks(
+                outputs.pred_masks,
+                inputs.original_sizes,
+                inputs.reshaped_input_sizes
+            );
+            const scores = outputs.iou_scores.data as Float32Array;
 
             onProgress?.({ status: 'Processing results...', progress: 90 });
 
             // Convert masks to usable format
             const results: AutoSegmentationResult[] = [];
-            for (let i = 0; i < masks.dims[1]; i++) {
-                const mask = masks[0][i];
-                const score = iou_scores.data[i];
-
-                if (score > 0.5) { // Filter low-quality masks
+            const batch = (masksOut as any)[0];
+            const count = Array.isArray(batch) ? batch.length : 0;
+            for (let i = 0; i < count; i++) {
+                const maskT = batch[i];
+                const score = scores[i] ?? 0;
+                if (score > 0.5) {
+                    const data = maskT.data as Uint8Array;
+                    const mask = new Float32Array(data.length);
+                    for (let j = 0; j < data.length; j++) mask[j] = data[j] ? 1 : 0;
                     results.push({
-                        mask: mask.data as Float32Array,
-                        width: mask.dims[1],
-                        height: mask.dims[0],
+                        mask,
+                        width: maskT.dims[1],
+                        height: maskT.dims[0],
                         confidence: score,
-                        id: `auto-${i}`
+                        id: `auto-${i}`,
                     });
                 }
             }
@@ -209,11 +255,6 @@ class SAM2ImageSegmentation {
             onProgress?.({ status: 'Complete!', progress: 100 });
 
             return results;
-        } catch (error) {
-            console.error('Automatic segmentation failed:', error);
-            throw error;
-        }
-    }
 
     // Convert mask data to polygon points
     maskToPolygon(maskData: Float32Array, width: number, height: number, threshold: number = 0.5): Point[] {

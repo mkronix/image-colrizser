@@ -368,7 +368,9 @@ const ImageCanvas: React.FC<ImageCanvasProps> = ({
   }, [handleEnd, isMobile]);
 
   // Double-click handler to finalize polygon
-  const handleDoubleClick = useCallback(() => {
+  const handleDoubleClick = useCallback((e?: React.MouseEvent<HTMLCanvasElement>) => {
+    e?.preventDefault();
+    e?.stopPropagation();
     if (currentTool === 'polygon' && isDrawing && polygonPoints.length > 2) {
       const newRegion: Region = {
         id: `region-${Date.now()}`,

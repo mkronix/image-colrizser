@@ -97,6 +97,7 @@ const SAM2InteractiveSegmentation: React.FC<SAM2InteractiveSegmentationProps> = 
                 description: err instanceof Error ? err.message : 'Unknown error',
                 variant: 'destructive'
             });
+            console.error('Segmentation init error', err);
         } finally {
             setIsInitializing(false);
         }
@@ -363,7 +364,7 @@ const SAM2InteractiveSegmentation: React.FC<SAM2InteractiveSegmentationProps> = 
                         <div className="space-y-3">
                             <div className="flex items-center gap-3">
                                 <div className="animate-spin h-5 w-5 border-2 border-blue-400 border-t-transparent rounded-full" />
-                                <span className="text-sm text-blue-300">{status}</span>
+                                <span className="text-sm text-blue-300" role="status" aria-live="polite">{status}</span>
                             </div>
                             <Progress value={progress} className="w-full" />
                         </div>
