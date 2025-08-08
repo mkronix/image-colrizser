@@ -47,13 +47,30 @@ class SmartObjectDetector {
             const ctx = canvas.getContext('2d');
             if (!ctx) throw new Error('Canvas context not available');
 
-            // Optimize for performance and accuracy
-            const maxSize = 1000;
-            const scale = Math.min(1, maxSize / Math.max(imageElement.width, imageElement.height));
-            canvas.width = Math.round(imageElement.width * scale);
-            canvas.height = Math.round(imageElement.height * scale);
+            // Optimize for the same render size used by ImageCanvas (fit into 800x600 canvas)
+            const TARGET_CANVAS_W = 800;
+            const TARGET_CANVAS_H = 600;
+            const imageRatio = imageElement.width / imageElement.height;
+            const canvasRatio = TARGET_CANVAS_W / TARGET_CANVAS_H;
+
+            let drawWidth: number, drawHeight: number, offsetX: number, offsetY: number;
+            if (imageRatio > canvasRatio) {
+                drawWidth = TARGET_CANVAS_W;
+                drawHeight = Math.round(TARGET_CANVAS_W / imageRatio);
+                offsetX = 0;
+                offsetY = Math.round((TARGET_CANVAS_H - drawHeight) / 2);
+            } else {
+                drawHeight = TARGET_CANVAS_H;
+                drawWidth = Math.round(TARGET_CANVAS_H * imageRatio);
+                offsetX = Math.round((TARGET_CANVAS_W - drawWidth) / 2);
+                offsetY = 0;
+            }
+
+            // Process on the drawn image area so coordinates match the canvas space
+            canvas.width = drawWidth;
+            canvas.height = drawHeight;
             
-            ctx.drawImage(imageElement, 0, 0, canvas.width, canvas.height);
+            ctx.drawImage(imageElement, 0, 0, drawWidth, drawHeight);
             const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
             
             progressCallback?.(30, 'Analyzing image features...');
@@ -65,21 +82,24 @@ class SmartObjectDetector {
             progressCallback?.(60, 'Detecting architectural elements...');
             await new Promise(resolve => setTimeout(resolve, 150));
             
-            // Detect windows, doors, and structural elements
-            const regions = this.detectArchitecturalFeatures(features, canvas.width, canvas.height, scale);
+            // Detect windows, doors, and structural elements (local coordinates inside draw area)
+            let regions = this.detectArchitecturalFeatures(features, canvas.width, canvas.height, 1, sensitivity >= 0.7);
             
-            progressCallback?.(90, 'Creating preview...');
+            // Fallback: run in aggressive mode if nothing found
+            if (regions.length === 0) {
+                regions = this.detectArchitecturalFeatures(features, canvas.width, canvas.height, 1, true);
+            }
             
-            // Create enhanced preview
-            const previewUrl = this.createEnhancedPreview(canvas, ctx, regions, scale);
+            // Create enhanced preview based on local coordinates
+            const previewUrl = this.createEnhancedPreview(canvas, ctx, regions, 1);
             
-            // Scale regions back to original image size
+            // Map regions to the app's canvas coordinate space by adding offsets
             const scaledRegions = regions.map((region, index) => ({
                 ...region,
                 id: `smart-detect-${Date.now()}-${index}`,
                 points: region.points.map(point => ({
-                    x: Math.round(point.x / scale),
-                    y: Math.round(point.y / scale)
+                    x: Math.round(point.x + offsetX),
+                    y: Math.round(point.y + offsetY)
                 }))
             }));
             
@@ -129,22 +149,22 @@ class SmartObjectDetector {
         return { gray, edges, width, height };
     }
     
-    static detectArchitecturalFeatures(features: any, width: number, height: number, scale: number): Region[] {
+    static detectArchitecturalFeatures(features: any, width: number, height: number, scale: number, aggressive: boolean = false): Region[] {
         const { edges } = features;
         const regions: Region[] = [];
         const visited = new Uint8Array(width * height);
-        const minSize = Math.max(30, 40 * scale);
-        const maxRegions = 12;
+        const minSize = Math.max(aggressive ? 20 : 30, (aggressive ? 30 : 40) * scale);
+        const maxRegions = aggressive ? 20 : 12;
         
         // Grid-based scanning for rectangular features
-        const stepSize = Math.max(15, Math.round(20 * scale));
+        const stepSize = Math.max(aggressive ? 10 : 15, Math.round((aggressive ? 12 : 20) * scale));
         
         for (let y = minSize; y < height - minSize && regions.length < maxRegions; y += stepSize) {
             for (let x = minSize; x < width - minSize && regions.length < maxRegions; x += stepSize) {
                 if (visited[y * width + x]) continue;
                 
-                const rect = this.findRectangularFeature(edges, width, height, x, y, minSize, scale);
-                if (rect && this.validateFeature(rect, edges, width, height)) {
+                const rect = this.findRectangularFeature(edges, width, height, x, y, minSize, scale, aggressive ? 0.22 : 0.3);
+                if (rect && this.validateFeature(rect, edges, width, height, aggressive)) {
                     const region: Region = {
                         id: `temp-${regions.length}`,
                         points: rect,
@@ -171,7 +191,8 @@ class SmartObjectDetector {
         startX: number, 
         startY: number, 
         minSize: number,
-        scale: number
+        scale: number,
+        minScore: number = 0.3
     ): Point[] | null {
         const maxWidth = Math.min(200 * scale, width - startX - 10);
         const maxHeight = Math.min(200 * scale, height - startY - 10);
@@ -192,7 +213,7 @@ class SmartObjectDetector {
             }
         }
         
-        if (bestScore > 0.3) {
+        if (bestScore > minScore) {
             return [
                 { x: startX, y: startY },
                 { x: startX + bestW, y: startY },
@@ -232,11 +253,14 @@ class SmartObjectDetector {
         return totalPixels > 0 ? edgePixels / totalPixels : 0;
     }
     
-    static validateFeature(rect: Point[], edges: Uint8Array, width: number, height: number): boolean {
+    static validateFeature(rect: Point[], edges: Uint8Array, width: number, height: number, aggressive: boolean = false): boolean {
         const area = Math.abs((rect[2].x - rect[0].x) * (rect[2].y - rect[0].y));
         const aspectRatio = Math.abs(rect[2].x - rect[0].x) / Math.abs(rect[2].y - rect[0].y);
-        
-        return area > 900 && area < 40000 && aspectRatio > 0.3 && aspectRatio < 4;
+        const minArea = aggressive ? 400 : 900;
+        const maxArea = aggressive ? 80000 : 40000;
+        const minAR = aggressive ? 0.2 : 0.3;
+        const maxAR = aggressive ? 5 : 4;
+        return area > minArea && area < maxArea && aspectRatio > minAR && aspectRatio < maxAR;
     }
     
     static markAreaVisited(visited: Uint8Array, width: number, rect: Point[], padding: number) {
@@ -391,9 +415,19 @@ const AIObjectDetection: React.FC<AIObjectDetectionProps> = ({
         if (detectedRegions.length === 0) return;
         
         console.log('Adding detected features to canvas...');
-        
-        onRegionsDetected(detectedRegions);
-        
+        // Normalize rectangles to [top-left, bottom-right] so the canvas draws full boxes
+        const normalized = detectedRegions.map(r => {
+            if (r.type === 'rectangle' && r.points.length >= 4) {
+                const xs = r.points.map(p => p.x);
+                const ys = r.points.map(p => p.y);
+                const start = { x: Math.min(...xs), y: Math.min(...ys) };
+                const end = { x: Math.max(...xs), y: Math.max(...ys) };
+                return { ...r, points: [start, end] };
+            }
+            return r;
+        });
+
+        onRegionsDetected(normalized);
         toast({
             title: "✅ Features Added!",
             description: `Added ${detectedRegions.length} detected features to your canvas`,
