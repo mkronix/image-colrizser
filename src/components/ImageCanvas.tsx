@@ -46,6 +46,8 @@ const ImageCanvas: React.FC<ImageCanvasProps> = ({
   // Mobile-specific states
   const [isMobile, setIsMobile] = useState(false);
   const [lastTouchTime, setLastTouchTime] = useState(0);
+  const [lastClickTime, setLastClickTime] = useState(0);
+  const [lastClickPos, setLastClickPos] = useState<Point | null>(null);
 
   useEffect(() => {
     const checkMobile = () => {
@@ -230,31 +232,44 @@ const ImageCanvas: React.FC<ImageCanvasProps> = ({
     return ctx.isPointInPath(point.x, point.y);
   }, []);
 
-  // Unified start function
+  // Check if two points are close enough for double-click detection
+  const isNearPoint = useCallback((p1: Point, p2: Point, threshold = 20): boolean => {
+    const dx = p1.x - p2.x;
+    const dy = p1.y - p2.y;
+    return Math.sqrt(dx * dx + dy * dy) < threshold;
+  }, []);
+
+  // Unified start function with improved double-click detection
   const handleStart = useCallback((e: MouseEvent | TouchEvent) => {
     e.preventDefault();
     const pos = getEventPos(e);
+    const now = Date.now();
 
-    // Handle double tap for polygon completion on mobile
-    if (isMobile && currentTool === 'polygon') {
-      const now = Date.now();
-      if (now - lastTouchTime < 300) { // Double tap detection
-        if (isDrawing && polygonPoints.length > 2) {
-          const newRegion: Region = {
-            id: `region-${Date.now()}`,
-            points: polygonPoints,
-            outlineColor: selectedOutlineColor,
-            filled: false,
-            type: 'polygon'
-          };
-          onRegionCreated(newRegion);
-          setIsDrawing(false);
-          setPolygonPoints([]);
-          setCurrentPath([]);
-          return;
-        }
+    // Double-click detection for polygon completion
+    if (currentTool === 'polygon') {
+      const timeDiff = now - lastClickTime;
+      const isDoubleClick = timeDiff < 500 && lastClickPos && isNearPoint(pos, lastClickPos, 30);
+      
+      if (isDoubleClick && isDrawing && polygonPoints.length > 2) {
+        // Complete the polygon
+        const newRegion: Region = {
+          id: `region-${Date.now()}`,
+          points: [...polygonPoints],
+          outlineColor: selectedOutlineColor,
+          filled: false,
+          type: 'polygon'
+        };
+        onRegionCreated(newRegion);
+        setIsDrawing(false);
+        setPolygonPoints([]);
+        setCurrentPath([]);
+        setLastClickTime(0);
+        setLastClickPos(null);
+        return;
       }
-      setLastTouchTime(now);
+      
+      setLastClickTime(now);
+      setLastClickPos(pos);
     }
 
     if (currentTool === 'pen') {
@@ -285,7 +300,7 @@ const ImageCanvas: React.FC<ImageCanvasProps> = ({
         }
       }
     }
-  }, [currentTool, getEventPos, selectedColor, selectedOutlineColor, onRegionCreated, onRegionSelected, regions, isPointInRegion, isMobile, lastTouchTime, isDrawing, polygonPoints]);
+  }, [currentTool, getEventPos, selectedColor, selectedOutlineColor, onRegionCreated, onRegionSelected, regions, isPointInRegion, lastClickTime, lastClickPos, isNearPoint, isDrawing, polygonPoints]);
 
   // Unified move function
   const handleMove = useCallback((e: MouseEvent | TouchEvent) => {
@@ -371,6 +386,8 @@ const ImageCanvas: React.FC<ImageCanvasProps> = ({
       setIsDrawing(false);
       setPolygonPoints([]);
       setCurrentPath([]);
+      setLastClickTime(0);
+      setLastClickPos(null);
     }
   }, [currentTool]);
 
@@ -427,7 +444,7 @@ const ImageCanvas: React.FC<ImageCanvasProps> = ({
       />
       {currentTool === 'polygon' && isDrawing && (
         <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 bg-zinc-900/90 px-3 py-1 rounded-lg text-sm border border-zinc-700 text-white">
-          {isMobile ? 'Double-tap to finish polygon' : 'Double-click to finish polygon'}
+          Double-click to finish polygon ({polygonPoints.length} points)
         </div>
       )}
     </div>

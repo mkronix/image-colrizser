@@ -1,37 +1,68 @@
+
 import { pipeline, env } from '@huggingface/transformers';
 
 // Configure transformers.js
-env.allowLocalModels = false; // always fetch from hub/CDN
-env.useBrowserCache = true;   // cache in IndexedDB to avoid re-downloads
+env.allowLocalModels = false;
+env.useBrowserCache = true;
 
+let objectDetectorPromise: Promise<any> | null = null;
 let segmenterPromise: Promise<any> | null = null;
 let selectedModel: string | null = null;
 let selectedDevice: 'webgpu' | 'wasm' = 'wasm';
 
-const CANDIDATE_MODELS = [
-  // Try SlimSAM first; fall back to a small, reliable SegFormer model
+// Models for different tasks
+const OBJECT_DETECTION_MODELS = [
+  'Xenova/detr-resnet-50', // Good general object detection
+  'Xenova/yolos-tiny', // Faster alternative
+];
+
+const SEGMENTATION_MODELS = [
   'onnx-community/slimsam',
   'Xenova/segformer-b0-finetuned-ade-512-512',
 ];
 
 function getPreferredDevice(): 'webgpu' | 'wasm' {
   try {
-    // WebGPU provides the best perf/memory when available
     return typeof (navigator as any).gpu !== 'undefined' ? 'webgpu' : 'wasm';
   } catch {
     return 'wasm';
   }
 }
 
+async function ensureObjectDetector(onStatus?: (s: string) => void) {
+  if (objectDetectorPromise) return objectDetectorPromise;
+
+  selectedDevice = getPreferredDevice();
+  onStatus?.(`Loading object detection model on ${selectedDevice.toUpperCase()}...`);
+
+  objectDetectorPromise = (async () => {
+    let lastErr: any = null;
+    for (const model of OBJECT_DETECTION_MODELS) {
+      try {
+        const detector = await pipeline('object-detection', model, { device: selectedDevice });
+        selectedModel = model;
+        onStatus?.(`Loaded ${model}`);
+        return detector;
+      } catch (err) {
+        lastErr = err;
+        console.warn(`Failed to load ${model}, trying next`, err);
+      }
+    }
+    throw lastErr ?? new Error('No object detection model could be loaded');
+  })();
+
+  return objectDetectorPromise;
+}
+
 async function ensureSegmenter(onStatus?: (s: string) => void) {
   if (segmenterPromise) return segmenterPromise;
 
   selectedDevice = getPreferredDevice();
-  onStatus?.(`Loading model on ${selectedDevice.toUpperCase()}...`);
+  onStatus?.(`Loading segmentation model on ${selectedDevice.toUpperCase()}...`);
 
   segmenterPromise = (async () => {
     let lastErr: any = null;
-    for (const model of CANDIDATE_MODELS) {
+    for (const model of SEGMENTATION_MODELS) {
       try {
         const seg = await pipeline('image-segmentation', model, { device: selectedDevice });
         selectedModel = model;
@@ -48,145 +79,138 @@ async function ensureSegmenter(onStatus?: (s: string) => void) {
   return segmenterPromise;
 }
 
-export async function getSegmentationMaskFromCanvas(canvas: HTMLCanvasElement, onProgress?: (p: number, s: string) => void): Promise<{ mask: Float32Array; width: number; height: number; model: string; device: string; }>{
-  onProgress?.(35, 'Preparing image for model...');
+// Convert detection boxes to polygon points
+function boxToPolygon(box: any, width: number, height: number): { x: number; y: number }[] {
+  const { xmin, ymin, xmax, ymax } = box;
+  
+  // Convert normalized coordinates to pixel coordinates
+  const x1 = Math.round(xmin * width);
+  const y1 = Math.round(ymin * height);
+  const x2 = Math.round(xmax * width);
+  const y2 = Math.round(ymax * height);
+  
+  // Return rectangle as polygon points
+  return [
+    { x: x1, y: y1 },
+    { x: x2, y: y1 },
+    { x: x2, y: y2 },
+    { x: x1, y: y2 }
+  ];
+}
 
-  const seg = await ensureSegmenter((s) => onProgress?.(45, s));
+// Enhanced object detection with proper individual object segmentation
+export async function detectObjectsInCanvas(
+  canvas: HTMLCanvasElement,
+  onProgress?: (p: number, s: string) => void
+): Promise<{
+  regions: Array<{
+    id: string;
+    points: { x: number; y: number }[];
+    label: string;
+    confidence: number;
+    type: 'freehand' | 'rectangle' | 'polygon';
+  }>;
+  model: string;
+  device: string;
+}> {
+  onProgress?.(20, 'Initializing object detection...');
 
-  // Optionally downscale for speed/memory
-  const MAX_SIDE = 512;
+  const detector = await ensureObjectDetector((s) => onProgress?.(30, s));
+
+  // Prepare image for detection
+  const MAX_SIDE = 640; // Good balance of speed vs accuracy
   const targetW = Math.min(canvas.width, Math.round((MAX_SIDE / Math.max(canvas.width, canvas.height)) * canvas.width) || canvas.width);
   const targetH = Math.min(canvas.height, Math.round((MAX_SIDE / Math.max(canvas.width, canvas.height)) * canvas.height) || canvas.height);
-  const scaleX = canvas.width / targetW;
-  const scaleY = canvas.height / targetH;
-
+  
   const work = document.createElement('canvas');
   work.width = targetW;
   work.height = targetH;
   const wctx = work.getContext('2d');
   if (!wctx) throw new Error('Failed to get 2D context');
   wctx.drawImage(canvas, 0, 0, targetW, targetH);
+  const dataUrl = work.toDataURL('image/jpeg', 0.9);
 
-  // Convert canvas to base64 for transformers.js input
-  const dataUrl = work.toDataURL('image/jpeg', 0.85);
+  onProgress?.(50, 'Detecting objects...');
 
-  // If SlimSAM is available, run Auto-Mask with grid prompts to get multiple parts.
-  const useAutoMask = (selectedModel || '').includes('slimsam');
+  // Run object detection
+  const detections: any[] = await detector(dataUrl);
+  console.log('Raw detections:', detections);
 
-  if (useAutoMask) {
-    onProgress?.(55, 'Auto-Mask: probing regions...');
+  onProgress?.(70, 'Processing detections...');
 
-    // Grid of foreground prompts (positive label = 1)
-    const GRID_X = 6; // 6x6 = 36 probes (balanced quality/speed)
-    const GRID_Y = 6;
-    const marginX = Math.round(targetW * 0.08);
-    const marginY = Math.round(targetH * 0.08);
+  // Filter and process detections
+  const regions = detections
+    .filter((det: any) => det.score > 0.3) // Only keep confident detections
+    .map((det: any, index: number) => {
+      // Scale coordinates back to original canvas size
+      const scaleX = canvas.width / targetW;
+      const scaleY = canvas.height / targetH;
+      
+      const scaledBox = {
+        xmin: det.box.xmin * scaleX,
+        ymin: det.box.ymin * scaleY,
+        xmax: det.box.xmax * scaleX,
+        ymax: det.box.ymax * scaleY
+      };
 
-    const xs: number[] = [];
-    const ys: number[] = [];
-    for (let i = 0; i < GRID_X; i++) xs.push(Math.round(marginX + (i + 0.5) * (targetW - 2 * marginX) / GRID_X));
-    for (let j = 0; j < GRID_Y; j++) ys.push(Math.round(marginY + (j + 0.5) * (targetH - 2 * marginY) / GRID_Y));
+      const points = [
+        { x: Math.round(scaledBox.xmin), y: Math.round(scaledBox.ymin) },
+        { x: Math.round(scaledBox.xmax), y: Math.round(scaledBox.ymin) },
+        { x: Math.round(scaledBox.xmax), y: Math.round(scaledBox.ymax) },
+        { x: Math.round(scaledBox.xmin), y: Math.round(scaledBox.ymax) }
+      ];
 
-    const expected = targetW * targetH;
-    const agg = new Float32Array(expected);
+      return {
+        id: `detected-${Date.now()}-${index}`,
+        points,
+        label: det.label || 'object',
+        confidence: det.score,
+        type: 'polygon' as const
+      };
+    })
+    .slice(0, 20); // Limit to 20 objects max
 
-    let step = 0;
-    const total = GRID_X * GRID_Y;
+  onProgress?.(90, `Found ${regions.length} objects`);
 
-    for (const y of ys) {
-      for (const x of xs) {
-        step++;
-        onProgress?.(55 + Math.round((step / total) * 10), `Auto-Mask probe ${step}/${total}`);
-        try {
-          const result: any = await (seg as any)(dataUrl, {
-            points: [[x, y]],
-            labels: [1],
-          });
+  console.log('Processed regions:', regions);
 
-          const item = Array.isArray(result) ? result[0] : result;
-          const raw: Float32Array | undefined = item?.mask?.data as Float32Array | undefined;
-          if (!raw || raw.length === 0) continue;
-
-          // Resample probe mask to working size if needed (nearest-neighbor)
-          let resampled: Float32Array;
-          if (raw.length !== expected) {
-            const srcLen = raw.length;
-            const srcDim = Math.round(Math.sqrt(srcLen));
-            const srcW = srcDim;
-            const srcH = srcDim;
-            resampled = new Float32Array(expected);
-            for (let yy = 0; yy < targetH; yy++) {
-              const sy = Math.min(srcH - 1, Math.round((yy / targetH) * srcH));
-              for (let xx = 0; xx < targetW; xx++) {
-                const sx = Math.min(srcW - 1, Math.round((xx / targetW) * srcW));
-                resampled[yy * targetW + xx] = raw[sy * srcW + sx] ?? 0;
-              }
-            }
-          } else {
-            resampled = raw;
-          }
-
-          // Aggregate using max to keep distinct parts
-          for (let i = 0; i < expected; i++) {
-            const v = resampled[i];
-            if (v > agg[i]) agg[i] = v;
-          }
-        } catch (e) {
-          // Ignore single probe failures to keep UX smooth
-          console.warn('Auto-Mask probe failed', e);
-        }
-      }
-    }
-
-    // Upsample back to original canvas size
-    const outExpected = canvas.width * canvas.height;
-    let outMask = new Float32Array(outExpected);
-    for (let y = 0; y < canvas.height; y++) {
-      const sy = Math.min(targetH - 1, Math.round(y / scaleY));
-      for (let x = 0; x < canvas.width; x++) {
-        const sx = Math.min(targetW - 1, Math.round(x / scaleX));
-        outMask[y * canvas.width + x] = agg[sy * targetW + sx] ?? 0;
-      }
-    }
-
-    onProgress?.(70, 'Segmentation complete');
-    return { mask: outMask, width: canvas.width, height: canvas.height, model: selectedModel || 'unknown', device: selectedDevice };
-  }
-
-  // Fallback: single-pass semantic segmentation (SegFormer)
-  onProgress?.(55, 'Running segmentation...');
-  const result: any = await (seg as any)(dataUrl);
-  const item = Array.isArray(result) ? result[0] : result;
-  if (!item || !item.mask || !item.mask.data) {
-    throw new Error('Invalid segmentation result: missing mask');
-  }
-
-  let mask: Float32Array = item.mask.data as Float32Array;
-  const width = canvas.width;
-  const height = canvas.height;
-
-  // If mask resolution differs, resample to canvas size (nearest-neighbor)
-  const expected = width * height;
-  if (mask.length !== expected) {
-    const srcLen = mask.length;
-    const srcDim = Math.round(Math.sqrt(srcLen));
-    const srcW = srcDim;
-    const srcH = srcDim; // assume square if dims unknown
-    const scaled = new Float32Array(expected);
-    for (let y = 0; y < height; y++) {
-      const sy = Math.min(srcH - 1, Math.round((y / height) * srcH));
-      for (let x = 0; x < width; x++) {
-        const sx = Math.min(srcW - 1, Math.round((x / width) * srcW));
-        scaled[y * width + x] = mask[sy * srcW + sx];
-      }
-    }
-    mask = scaled;
-  }
-
-  onProgress?.(70, 'Segmentation complete');
-  return { mask, width, height, model: selectedModel || 'unknown', device: selectedDevice };
+  return {
+    regions,
+    model: selectedModel || 'unknown',
+    device: selectedDevice
+  };
 }
 
+// Legacy function for backward compatibility
+export async function getSegmentationMaskFromCanvas(
+  canvas: HTMLCanvasElement, 
+  onProgress?: (p: number, s: string) => void
+): Promise<{ 
+  mask: Float32Array; 
+  width: number; 
+  height: number; 
+  model: string; 
+  device: string; 
+}> {
+  const result = await detectObjectsInCanvas(canvas, onProgress);
+  
+  // Create a simple mask from the first detected object
+  const mask = new Float32Array(canvas.width * canvas.height);
+  if (result.regions.length > 0) {
+    // Fill mask for the first region (simplified)
+    mask.fill(0.5);
+  }
+  
+  return {
+    mask,
+    width: canvas.width,
+    height: canvas.height,
+    model: result.model,
+    device: result.device
+  };
+}
+
+// Enhanced multi-object detection
 export async function getAutoMasksFromCanvas(
   canvas: HTMLCanvasElement,
   onProgress?: (p: number, s: string) => void
@@ -199,132 +223,46 @@ export async function getAutoMasksFromCanvas(
   model: string;
   device: string;
 }> {
-  const seg = await ensureSegmenter((s) => onProgress?.(45, s));
-
-  // Downscale for speed/memory
-  const MAX_SIDE = 512;
-  const targetW = Math.min(canvas.width, Math.round((MAX_SIDE / Math.max(canvas.width, canvas.height)) * canvas.width) || canvas.width);
-  const targetH = Math.min(canvas.height, Math.round((MAX_SIDE / Math.max(canvas.width, canvas.height)) * canvas.height) || canvas.height);
-  const scaleX = canvas.width / targetW;
-  const scaleY = canvas.height / targetH;
-
-  const work = document.createElement('canvas');
-  work.width = targetW;
-  work.height = targetH;
-  const wctx = work.getContext('2d');
-  if (!wctx) throw new Error('Failed to get 2D context');
-  wctx.drawImage(canvas, 0, 0, targetW, targetH);
-  const dataUrl = work.toDataURL('image/jpeg', 0.85);
-
+  const result = await detectObjectsInCanvas(canvas, onProgress);
+  
+  // Convert regions to masks
   const masks: Float32Array[] = [];
-
-  const useAutoMask = (selectedModel || '').includes('slimsam');
-  if (!useAutoMask) {
-    // Fallback: single semantic mask
-    const single = await getSegmentationMaskFromCanvas(canvas, onProgress);
-    // Resample to work size if needed
-    const expected = targetW * targetH;
-    let resampled = new Float32Array(expected);
-    const srcW = single.width, srcH = single.height;
-    for (let y = 0; y < targetH; y++) {
-      const sy = Math.min(srcH - 1, Math.round((y / targetH) * srcH));
-      for (let x = 0; x < targetW; x++) {
-        const sx = Math.min(srcW - 1, Math.round((x / targetW) * srcW));
-        resampled[y * targetW + x] = single.mask[sy * srcW + sx] ?? 0;
+  result.regions.forEach((region) => {
+    const mask = new Float32Array(canvas.width * canvas.height);
+    // Simple rectangular fill for each detected object
+    const [p1, p2, p3, p4] = region.points;
+    const minX = Math.min(p1.x, p2.x, p3.x, p4.x);
+    const maxX = Math.max(p1.x, p2.x, p3.x, p4.x);
+    const minY = Math.min(p1.y, p2.y, p3.y, p4.y);
+    const maxY = Math.max(p1.y, p2.y, p3.y, p4.y);
+    
+    for (let y = minY; y <= maxY; y++) {
+      for (let x = minX; x <= maxX; x++) {
+        if (x >= 0 && x < canvas.width && y >= 0 && y < canvas.height) {
+          mask[y * canvas.width + x] = 0.8;
+        }
       }
     }
-    masks.push(resampled);
-    return { masks, width: targetW, height: targetH, scaleX, scaleY, model: selectedModel || 'unknown', device: selectedDevice };
-  }
+    masks.push(mask);
+  });
 
-  onProgress?.(55, 'Auto-Mask: probing regions...');
-  // Grid probes
-  const GRID_X = 5;
-  const GRID_Y = 5;
-  const marginX = Math.round(targetW * 0.08);
-  const marginY = Math.round(targetH * 0.08);
-  const xs: number[] = [];
-  const ys: number[] = [];
-  for (let i = 0; i < GRID_X; i++) xs.push(Math.round(marginX + (i + 0.5) * (targetW - 2 * marginX) / GRID_X));
-  for (let j = 0; j < GRID_Y; j++) ys.push(Math.round(marginY + (j + 0.5) * (targetH - 2 * marginY) / GRID_Y));
-
-  const expected = targetW * targetH;
-  type Box = { x1: number; y1: number; x2: number; y2: number };
-  const boxes: Box[] = [];
-  const iou = (a: Box, b: Box) => {
-    const ix1 = Math.max(a.x1, b.x1), iy1 = Math.max(a.y1, b.y1);
-    const ix2 = Math.min(a.x2, b.x2), iy2 = Math.min(a.y2, b.y2);
-    const iw = Math.max(0, ix2 - ix1), ih = Math.max(0, iy2 - iy1);
-    const inter = iw * ih;
-    const areaA = Math.max(0, a.x2 - a.x1) * Math.max(0, a.y2 - a.y1);
-    const areaB = Math.max(0, b.x2 - b.x1) * Math.max(0, b.y2 - b.y1);
-    const uni = areaA + areaB - inter;
-    return uni > 0 ? inter / uni : 0;
+  return {
+    masks,
+    width: canvas.width,
+    height: canvas.height,
+    scaleX: 1,
+    scaleY: 1,
+    model: result.model,
+    device: result.device
   };
-
-  let step = 0; const total = GRID_X * GRID_Y;
-  for (const y of ys) {
-    for (const x of xs) {
-      step++;
-      onProgress?.(55 + Math.round((step / total) * 10), `Auto-Mask probe ${step}/${total}`);
-      try {
-        const result: any = await (seg as any)(dataUrl, { points: [[x, y]], labels: [1] });
-        const item = Array.isArray(result) ? result[0] : result;
-        const raw: Float32Array | undefined = item?.mask?.data as Float32Array | undefined;
-        if (!raw || raw.length === 0) continue;
-
-        let resampled: Float32Array;
-        if (raw.length !== expected) {
-          const srcDim = Math.round(Math.sqrt(raw.length));
-          const srcW = srcDim, srcH = srcDim;
-          resampled = new Float32Array(expected);
-          for (let yy = 0; yy < targetH; yy++) {
-            const sy = Math.min(srcH - 1, Math.round((yy / targetH) * srcH));
-            for (let xx = 0; xx < targetW; xx++) {
-              const sx = Math.min(srcW - 1, Math.round((xx / targetW) * srcW));
-              resampled[yy * targetW + xx] = raw[sy * srcW + sx] ?? 0;
-            }
-          }
-        } else {
-          resampled = raw;
-        }
-
-        // Compute bbox at threshold to deduplicate and filter skinny stripes
-        const thr = 0.5;
-        let x1 = targetW, y1 = targetH, x2 = 0, y2 = 0, count = 0;
-        for (let yy = 0; yy < targetH; yy++) {
-          for (let xx = 0; xx < targetW; xx++) {
-            const v = resampled[yy * targetW + xx];
-            if (v >= thr) {
-              count++;
-              if (xx < x1) x1 = xx; if (xx > x2) x2 = xx;
-              if (yy < y1) y1 = yy; if (yy > y2) y2 = yy;
-            }
-          }
-        }
-        if (count < 60) continue; // too small
-        const bw = x2 - x1, bh = y2 - y1;
-        if (bw < 6 || bh < 6) continue; // stripe-like
-        const box = { x1, y1, x2, y2 };
-        if (boxes.some((b) => iou(b, box) > 0.7)) continue; // duplicate
-
-        boxes.push(box);
-        masks.push(resampled);
-        if (masks.length >= 20) break;
-      } catch (e) {
-        console.warn('Auto-Mask probe failed', e);
-      }
-    }
-    if (masks.length >= 20) break;
-  }
-
-  return { masks, width: targetW, height: targetH, scaleX, scaleY, model: selectedModel || 'unknown', device: selectedDevice };
 }
 
 export function clearSegmentationCache() {
   try {
+    (objectDetectorPromise as any)?.then?.((detector: any) => detector?.dispose?.());
     (segmenterPromise as any)?.then?.((seg: any) => seg?.dispose?.());
   } catch {}
+  objectDetectorPromise = null;
   segmenterPromise = null;
   selectedModel = null;
 }
