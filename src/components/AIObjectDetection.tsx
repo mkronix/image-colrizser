@@ -5,7 +5,7 @@ import { Slider } from '@/components/ui/slider';
 import { toast } from '@/hooks/use-toast';
 import { Bot, Eye, Sparkles, Zap, AlertTriangle } from 'lucide-react';
 import React, { useCallback, useState } from 'react';
-import { getSegmentationMaskFromCanvas } from '@/lib/ai/segmentation';
+import { getSegmentationMaskFromCanvas, getAutoMasksFromCanvas } from '@/lib/ai/segmentation';
 
 // Simple, reliable edge detection without external AI models
 
@@ -76,68 +76,86 @@ class SmartObjectDetector {
             
             progressCallback?.(30, 'Loading SlimSAM / SegFormer...');
             
-            // Run segmentation with Transformers.js (SlimSAM preferred)
-            const seg = await getSegmentationMaskFromCanvas(canvas, (p, s) => progressCallback?.(p, s));
-            progressCallback?.(75, 'Extracting segments...');
-
-            // Convert mask to rectangular regions using connected components
+            // Multi-mask auto mode (SlimSAM) with polygon outlines, fallback to single mask
             const threshold = Math.max(0.35, 0.5 - (sensitivity - 0.5) * 0.2); // more sensitive -> lower threshold
             const minRegionArea = Math.max(200, Math.round((1 - sensitivity) * 2500));
             const maxRegions = 20;
             const regions: Region[] = [];
 
-            const { width: mW, height: mH, mask } = seg;
-            const visited = new Uint8Array(mW * mH);
+            try {
+                const auto = await getAutoMasksFromCanvas(canvas, (p, s) => progressCallback?.(p, s));
+                progressCallback?.(75, 'Extracting segments...');
 
-            const dirs = [
-                [1,0],[-1,0],[0,1],[0,-1]
-            ];
+                const mW = auto.width;
+                const mH = auto.height;
+                const areaScale = auto.scaleX * auto.scaleY;
+                const minAreaWork = Math.max(80, Math.round(minRegionArea / areaScale));
 
-            for (let y = 0; y < mH && regions.length < maxRegions; y++) {
-                for (let x = 0; x < mW && regions.length < maxRegions; x++) {
-                    const idx = y * mW + x;
-                    if (visited[idx] || mask[idx] < threshold) continue;
+                const boxes: { x1: number; y1: number; x2: number; y2: number }[] = [];
+                const iou = (a: any, b: any) => {
+                    const ix1 = Math.max(a.x1, b.x1), iy1 = Math.max(a.y1, b.y1);
+                    const ix2 = Math.min(a.x2, b.x2), iy2 = Math.min(a.y2, b.y2);
+                    const iw = Math.max(0, ix2 - ix1), ih = Math.max(0, iy2 - iy1);
+                    const inter = iw * ih;
+                    const areaA = Math.max(0, a.x2 - a.x1) * Math.max(0, a.y2 - a.y1);
+                    const areaB = Math.max(0, b.x2 - b.x1) * Math.max(0, b.y2 - b.y1);
+                    const uni = areaA + areaB - inter;
+                    return uni > 0 ? inter / uni : 0;
+                };
 
-                    // BFS for one component
-                    let minX = x, maxX = x, minY = y, maxY = y;
-                    const qX: number[] = [x];
-                    const qY: number[] = [y];
-                    visited[idx] = 1;
-                    let pixels = 0;
+                for (let i = 0; i < auto.masks.length && regions.length < maxRegions; i++) {
+                    const mask = auto.masks[i];
+                    const poly = this.extractPolygonFromMask(mask, mW, mH, threshold, minAreaWork);
+                    if (!poly || poly.length < 3) continue;
 
-                    while (qX.length) {
-                        const cx = qX.shift()!;
-                        const cy = qY.shift()!;
-                        pixels++;
-                        if (cx < minX) minX = cx; if (cx > maxX) maxX = cx;
-                        if (cy < minY) minY = cy; if (cy > maxY) maxY = cy;
-                        for (const [dx, dy] of dirs) {
-                            const nx = cx + dx, ny = cy + dy;
-                            if (nx >= 0 && nx < mW && ny >= 0 && ny < mH) {
-                                const nidx = ny * mW + nx;
-                                if (!visited[nidx] && mask[nidx] >= threshold) {
-                                    visited[nidx] = 1;
-                                    qX.push(nx); qY.push(ny);
-                                }
-                            }
-                        }
-                    }
+                    const xs = poly.map(p => p.x);
+                    const ys = poly.map(p => p.y);
+                    const box = { x1: Math.min(...xs), y1: Math.min(...ys), x2: Math.max(...xs), y2: Math.max(...ys) };
+                    if (boxes.some(b => iou(b, box) > 0.7)) continue; // deduplicate
+                    boxes.push(box);
 
-                    const area = (maxX - minX + 1) * (maxY - minY + 1);
-                    if (area >= minRegionArea) {
+                    const scaledPoly = poly.map(p => ({ x: Math.round(p.x * auto.scaleX), y: Math.round(p.y * auto.scaleY) }));
+                    regions.push({
+                        id: `seg-${regions.length}`,
+                        points: scaledPoly,
+                        outlineColor: '#22c55e',
+                        filled: false,
+                        type: 'polygon',
+                        label: 'segment',
+                        confidence: Math.min(99, Math.round(70 + (sensitivity * 25)))
+                    } as any);
+                }
+
+                // If nothing extracted, fallback to single-mask polygon
+                if (regions.length === 0) {
+                    const seg = await getSegmentationMaskFromCanvas(canvas, (p, s) => progressCallback?.(p, s));
+                    const poly = this.extractPolygonFromMask(seg.mask, seg.width, seg.height, threshold, minRegionArea);
+                    if (poly && poly.length >= 3) {
                         regions.push({
-                            id: `seg-${regions.length}`,
-                            points: [
-                                { x: minX, y: minY },
-                                { x: maxX, y: maxY }
-                            ],
+                            id: 'seg-0',
+                            points: poly,
                             outlineColor: '#22c55e',
                             filled: false,
-                            type: 'rectangle',
+                            type: 'polygon',
                             label: 'segment',
                             confidence: Math.min(99, Math.round(70 + (sensitivity * 25)))
                         } as any);
                     }
+                }
+            } catch (e) {
+                console.warn('Auto mask failed, using single mask fallback', e);
+                const seg = await getSegmentationMaskFromCanvas(canvas, (p, s) => progressCallback?.(p, s));
+                const poly = this.extractPolygonFromMask(seg.mask, seg.width, seg.height, threshold, minRegionArea);
+                if (poly && poly.length >= 3) {
+                    regions.push({
+                        id: 'seg-0',
+                        points: poly,
+                        outlineColor: '#22c55e',
+                        filled: false,
+                        type: 'polygon',
+                        label: 'segment',
+                        confidence: Math.min(99, Math.round(70 + (sensitivity * 25)))
+                    } as any);
                 }
             }
             
@@ -346,6 +364,63 @@ class SmartObjectDetector {
         const colors = ['#00ff88', '#ff6b6b', '#4ecdc4', '#45b7d1', '#96ceb4', '#ffeaa7', '#dda0dd', '#98d8c8'];
         return colors[index % colors.length];
     }
+
+    // Shoelace formula for polygon area
+    static polygonArea(poly: Point[]): number {
+        let area = 0;
+        for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+            area += (poly[j].x * poly[i].y) - (poly[i].x * poly[j].y);
+        }
+        return Math.abs(area) * 0.5;
+    }
+
+    // Monotonic chain convex hull (fast and stable)
+    static computeConvexHull(points: Point[]): Point[] {
+        if (points.length <= 3) return points;
+        const pts = [...points].sort((a, b) => (a.x === b.x ? a.y - b.y : a.x - b.x));
+        const cross = (o: Point, a: Point, b: Point) => (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+
+        const lower: Point[] = [];
+        for (const p of pts) {
+            while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], p) <= 0) lower.pop();
+            lower.push(p);
+        }
+        const upper: Point[] = [];
+        for (let i = pts.length - 1; i >= 0; i--) {
+            const p = pts[i];
+            while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], p) <= 0) upper.pop();
+            upper.push(p);
+        }
+        upper.pop(); lower.pop();
+        return lower.concat(upper);
+    }
+
+    // Extract a polygon outline from a probability mask using boundary sampling + convex hull
+    static extractPolygonFromMask(mask: Float32Array, width: number, height: number, thr: number, minAreaPx: number): Point[] | null {
+        const boundary: Point[] = [];
+        const step = 2; // sampling step for speed
+        for (let y = 1; y < height - 1; y += step) {
+            for (let x = 1; x < width - 1; x += step) {
+                const v = mask[y * width + x];
+                if (v < thr) continue;
+                // If any 4-neighbour is below threshold -> boundary
+                if (
+                    mask[(y - 1) * width + x] < thr ||
+                    mask[(y + 1) * width + x] < thr ||
+                    mask[y * width + (x - 1)] < thr ||
+                    mask[y * width + (x + 1)] < thr
+                ) {
+                    boundary.push({ x, y });
+                }
+            }
+        }
+        if (boundary.length < 10) return null;
+
+        const hull = this.computeConvexHull(boundary);
+        if (hull.length < 3) return null;
+        if (this.polygonArea(hull) < minAreaPx) return null;
+        return hull;
+    }
     
     static createEnhancedPreview(canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D, regions: Region[], scale: number): string {
         // Create new canvas for preview
@@ -357,52 +432,64 @@ class SmartObjectDetector {
         // Draw original image
         previewCtx.drawImage(canvas, 0, 0);
         
-            // Draw detections with enhanced styling
-            regions.forEach((region, index) => {
-                const color = region.outlineColor || '#22c55e';
+        // Draw detections with enhanced styling
+        regions.forEach((region) => {
+            const color = region.outlineColor || '#22c55e';
 
-                // Support both 2-point ([start,end]) and 4-point rectangles
-                let x1 = region.points[0]?.x ?? 0;
-                let y1 = region.points[0]?.y ?? 0;
-                let x2 = region.points[1]?.x ?? region.points[2]?.x ?? x1;
-                let y2 = region.points[1]?.y ?? region.points[2]?.y ?? y1;
-
-                // If we actually have 4 points, compute min/max to be safe
-                if (region.points.length >= 4) {
-                    const xs = region.points.map(p => p.x);
-                    const ys = region.points.map(p => p.y);
-                    x1 = Math.min(...xs); y1 = Math.min(...ys);
-                    x2 = Math.max(...xs); y2 = Math.max(...ys);
-                }
-
-                const w = x2 - x1;
-                const h = y2 - y1;
-                if (!Number.isFinite(w) || !Number.isFinite(h) || Math.abs(w) < 1 || Math.abs(h) < 1) return;
-                
-                // semi-transparent fill
-                previewCtx.fillStyle = `${color}15`;
+            if (region.type === 'polygon' || region.points.length > 2) {
+                // Polygon fill
                 previewCtx.beginPath();
-                previewCtx.rect(x1, y1, w, h);
+                previewCtx.moveTo(region.points[0].x, region.points[0].y);
+                for (let i = 1; i < region.points.length; i++) {
+                    previewCtx.lineTo(region.points[i].x, region.points[i].y);
+                }
+                previewCtx.closePath();
+                previewCtx.fillStyle = `${color}15`;
                 previewCtx.fill();
-                
-                // border
                 previewCtx.strokeStyle = color;
                 previewCtx.lineWidth = 2;
                 previewCtx.stroke();
-                
-                // label
+
+                // Label at centroid
+                const cx = Math.round(region.points.reduce((s, p) => s + p.x, 0) / region.points.length);
+                const cy = Math.round(region.points.reduce((s, p) => s + p.y, 0) / region.points.length);
                 previewCtx.fillStyle = color;
                 previewCtx.font = 'bold 12px Arial';
                 const label = region.label || 'segment';
                 const conf = region.confidence ?? 80;
-                previewCtx.fillText(
-                    `${label} (${conf}%)`,
-                    x1 + 4,
-                    Math.max(12, y1 - 4)
-                );
-            });
-            
-            return previewCanvas.toDataURL();
+                previewCtx.fillText(`${label} (${conf}%)`, cx + 4, Math.max(12, cy - 4));
+                return;
+            }
+
+            // Rectangle fallback (2 or 4 points)
+            let x1 = region.points[0]?.x ?? 0;
+            let y1 = region.points[0]?.y ?? 0;
+            let x2 = region.points[1]?.x ?? region.points[2]?.x ?? x1;
+            let y2 = region.points[1]?.y ?? region.points[2]?.y ?? y1;
+            if (region.points.length >= 4) {
+                const xs = region.points.map(p => p.x);
+                const ys = region.points.map(p => p.y);
+                x1 = Math.min(...xs); y1 = Math.min(...ys);
+                x2 = Math.max(...xs); y2 = Math.max(...ys);
+            }
+            const w = x2 - x1; const h = y2 - y1;
+            if (!Number.isFinite(w) || !Number.isFinite(h) || Math.abs(w) < 1 || Math.abs(h) < 1) return;
+
+            previewCtx.fillStyle = `${color}15`;
+            previewCtx.beginPath();
+            previewCtx.rect(x1, y1, w, h);
+            previewCtx.fill();
+            previewCtx.strokeStyle = color;
+            previewCtx.lineWidth = 2;
+            previewCtx.stroke();
+            previewCtx.fillStyle = color;
+            previewCtx.font = 'bold 12px Arial';
+            const label = region.label || 'segment';
+            const conf = region.confidence ?? 80;
+            previewCtx.fillText(`${label} (${conf}%)`, x1 + 4, Math.max(12, y1 - 4));
+        });
+        
+        return previewCanvas.toDataURL();
     }
 }
 

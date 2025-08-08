@@ -187,6 +187,140 @@ export async function getSegmentationMaskFromCanvas(canvas: HTMLCanvasElement, o
   return { mask, width, height, model: selectedModel || 'unknown', device: selectedDevice };
 }
 
+export async function getAutoMasksFromCanvas(
+  canvas: HTMLCanvasElement,
+  onProgress?: (p: number, s: string) => void
+): Promise<{
+  masks: Float32Array[];
+  width: number;
+  height: number;
+  scaleX: number;
+  scaleY: number;
+  model: string;
+  device: string;
+}> {
+  const seg = await ensureSegmenter((s) => onProgress?.(45, s));
+
+  // Downscale for speed/memory
+  const MAX_SIDE = 512;
+  const targetW = Math.min(canvas.width, Math.round((MAX_SIDE / Math.max(canvas.width, canvas.height)) * canvas.width) || canvas.width);
+  const targetH = Math.min(canvas.height, Math.round((MAX_SIDE / Math.max(canvas.width, canvas.height)) * canvas.height) || canvas.height);
+  const scaleX = canvas.width / targetW;
+  const scaleY = canvas.height / targetH;
+
+  const work = document.createElement('canvas');
+  work.width = targetW;
+  work.height = targetH;
+  const wctx = work.getContext('2d');
+  if (!wctx) throw new Error('Failed to get 2D context');
+  wctx.drawImage(canvas, 0, 0, targetW, targetH);
+  const dataUrl = work.toDataURL('image/jpeg', 0.85);
+
+  const masks: Float32Array[] = [];
+
+  const useAutoMask = (selectedModel || '').includes('slimsam');
+  if (!useAutoMask) {
+    // Fallback: single semantic mask
+    const single = await getSegmentationMaskFromCanvas(canvas, onProgress);
+    // Resample to work size if needed
+    const expected = targetW * targetH;
+    let resampled = new Float32Array(expected);
+    const srcW = single.width, srcH = single.height;
+    for (let y = 0; y < targetH; y++) {
+      const sy = Math.min(srcH - 1, Math.round((y / targetH) * srcH));
+      for (let x = 0; x < targetW; x++) {
+        const sx = Math.min(srcW - 1, Math.round((x / targetW) * srcW));
+        resampled[y * targetW + x] = single.mask[sy * srcW + sx] ?? 0;
+      }
+    }
+    masks.push(resampled);
+    return { masks, width: targetW, height: targetH, scaleX, scaleY, model: selectedModel || 'unknown', device: selectedDevice };
+  }
+
+  onProgress?.(55, 'Auto-Mask: probing regions...');
+  // Grid probes
+  const GRID_X = 5;
+  const GRID_Y = 5;
+  const marginX = Math.round(targetW * 0.08);
+  const marginY = Math.round(targetH * 0.08);
+  const xs: number[] = [];
+  const ys: number[] = [];
+  for (let i = 0; i < GRID_X; i++) xs.push(Math.round(marginX + (i + 0.5) * (targetW - 2 * marginX) / GRID_X));
+  for (let j = 0; j < GRID_Y; j++) ys.push(Math.round(marginY + (j + 0.5) * (targetH - 2 * marginY) / GRID_Y));
+
+  const expected = targetW * targetH;
+  type Box = { x1: number; y1: number; x2: number; y2: number };
+  const boxes: Box[] = [];
+  const iou = (a: Box, b: Box) => {
+    const ix1 = Math.max(a.x1, b.x1), iy1 = Math.max(a.y1, b.y1);
+    const ix2 = Math.min(a.x2, b.x2), iy2 = Math.min(a.y2, b.y2);
+    const iw = Math.max(0, ix2 - ix1), ih = Math.max(0, iy2 - iy1);
+    const inter = iw * ih;
+    const areaA = Math.max(0, a.x2 - a.x1) * Math.max(0, a.y2 - a.y1);
+    const areaB = Math.max(0, b.x2 - b.x1) * Math.max(0, b.y2 - b.y1);
+    const uni = areaA + areaB - inter;
+    return uni > 0 ? inter / uni : 0;
+  };
+
+  let step = 0; const total = GRID_X * GRID_Y;
+  for (const y of ys) {
+    for (const x of xs) {
+      step++;
+      onProgress?.(55 + Math.round((step / total) * 10), `Auto-Mask probe ${step}/${total}`);
+      try {
+        const result: any = await (seg as any)(dataUrl, { points: [[x, y]], labels: [1] });
+        const item = Array.isArray(result) ? result[0] : result;
+        const raw: Float32Array | undefined = item?.mask?.data as Float32Array | undefined;
+        if (!raw || raw.length === 0) continue;
+
+        let resampled: Float32Array;
+        if (raw.length !== expected) {
+          const srcDim = Math.round(Math.sqrt(raw.length));
+          const srcW = srcDim, srcH = srcDim;
+          resampled = new Float32Array(expected);
+          for (let yy = 0; yy < targetH; yy++) {
+            const sy = Math.min(srcH - 1, Math.round((yy / targetH) * srcH));
+            for (let xx = 0; xx < targetW; xx++) {
+              const sx = Math.min(srcW - 1, Math.round((xx / targetW) * srcW));
+              resampled[yy * targetW + xx] = raw[sy * srcW + sx] ?? 0;
+            }
+          }
+        } else {
+          resampled = raw;
+        }
+
+        // Compute bbox at threshold to deduplicate and filter skinny stripes
+        const thr = 0.5;
+        let x1 = targetW, y1 = targetH, x2 = 0, y2 = 0, count = 0;
+        for (let yy = 0; yy < targetH; yy++) {
+          for (let xx = 0; xx < targetW; xx++) {
+            const v = resampled[yy * targetW + xx];
+            if (v >= thr) {
+              count++;
+              if (xx < x1) x1 = xx; if (xx > x2) x2 = xx;
+              if (yy < y1) y1 = yy; if (yy > y2) y2 = yy;
+            }
+          }
+        }
+        if (count < 60) continue; // too small
+        const bw = x2 - x1, bh = y2 - y1;
+        if (bw < 6 || bh < 6) continue; // stripe-like
+        const box = { x1, y1, x2, y2 };
+        if (boxes.some((b) => iou(b, box) > 0.7)) continue; // duplicate
+
+        boxes.push(box);
+        masks.push(resampled);
+        if (masks.length >= 20) break;
+      } catch (e) {
+        console.warn('Auto-Mask probe failed', e);
+      }
+    }
+    if (masks.length >= 20) break;
+  }
+
+  return { masks, width: targetW, height: targetH, scaleX, scaleY, model: selectedModel || 'unknown', device: selectedDevice };
+}
+
 export function clearSegmentationCache() {
   try {
     (segmenterPromise as any)?.then?.((seg: any) => seg?.dispose?.());
