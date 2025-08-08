@@ -3,7 +3,7 @@ import { Button } from '@/components/ui/button';
 import { toast } from '@/hooks/use-toast';
 import { Layers } from 'lucide-react';
 import React from 'react';
-import AIObjectDetection from './AIObjectDetection';
+import SAM2InteractiveSegmentation from './SAM2InteractiveSegmentation';
 
 interface Point {
     x: number;
@@ -41,7 +41,7 @@ const AIEdgeDetection: React.FC<AIEdgeDetectionProps> = ({
     // Show AI Object Detection if selected
     if (showAIDetection) {
         return (
-            <AIObjectDetection
+            <SAM2InteractiveSegmentation
                 image={image}
                 onRegionsDetected={onRegionsDetected}
                 isOpen={true}
