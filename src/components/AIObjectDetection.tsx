@@ -5,6 +5,7 @@ import { Slider } from '@/components/ui/slider';
 import { toast } from '@/hooks/use-toast';
 import { Bot, Eye, Sparkles, Zap, AlertTriangle } from 'lucide-react';
 import React, { useCallback, useState } from 'react';
+import { getSegmentationMaskFromCanvas } from '@/lib/ai/segmentation';
 
 // Simple, reliable edge detection without external AI models
 
@@ -73,22 +74,74 @@ class SmartObjectDetector {
             ctx.drawImage(imageElement, 0, 0, drawWidth, drawHeight);
             const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
             
-            progressCallback?.(30, 'Analyzing image features...');
-            await new Promise(resolve => setTimeout(resolve, 100));
+            progressCallback?.(30, 'Loading SlimSAM / SegFormer...');
             
-            // Advanced feature detection
-            const features = this.analyzeImageFeatures(imageData, sensitivity);
-            
-            progressCallback?.(60, 'Detecting architectural elements...');
-            await new Promise(resolve => setTimeout(resolve, 150));
-            
-            // Detect windows, doors, and structural elements (local coordinates inside draw area)
-            let regions = this.detectArchitecturalFeatures(features, canvas.width, canvas.height, 1, sensitivity >= 0.7);
-            
-            // Fallback: run in aggressive mode if nothing found
-            if (regions.length === 0) {
-                regions = this.detectArchitecturalFeatures(features, canvas.width, canvas.height, 1, true);
+            // Run segmentation with Transformers.js (SlimSAM preferred)
+            const seg = await getSegmentationMaskFromCanvas(canvas, (p, s) => progressCallback?.(p, s));
+            progressCallback?.(75, 'Extracting segments...');
+
+            // Convert mask to rectangular regions using connected components
+            const threshold = Math.max(0.35, 0.5 - (sensitivity - 0.5) * 0.2); // more sensitive -> lower threshold
+            const minRegionArea = Math.max(200, Math.round((1 - sensitivity) * 2500));
+            const maxRegions = 20;
+            const regions: Region[] = [];
+
+            const { width: mW, height: mH, mask } = seg;
+            const visited = new Uint8Array(mW * mH);
+
+            const dirs = [
+                [1,0],[-1,0],[0,1],[0,-1]
+            ];
+
+            for (let y = 0; y < mH && regions.length < maxRegions; y++) {
+                for (let x = 0; x < mW && regions.length < maxRegions; x++) {
+                    const idx = y * mW + x;
+                    if (visited[idx] || mask[idx] < threshold) continue;
+
+                    // BFS for one component
+                    let minX = x, maxX = x, minY = y, maxY = y;
+                    const qX: number[] = [x];
+                    const qY: number[] = [y];
+                    visited[idx] = 1;
+                    let pixels = 0;
+
+                    while (qX.length) {
+                        const cx = qX.shift()!;
+                        const cy = qY.shift()!;
+                        pixels++;
+                        if (cx < minX) minX = cx; if (cx > maxX) maxX = cx;
+                        if (cy < minY) minY = cy; if (cy > maxY) maxY = cy;
+                        for (const [dx, dy] of dirs) {
+                            const nx = cx + dx, ny = cy + dy;
+                            if (nx >= 0 && nx < mW && ny >= 0 && ny < mH) {
+                                const nidx = ny * mW + nx;
+                                if (!visited[nidx] && mask[nidx] >= threshold) {
+                                    visited[nidx] = 1;
+                                    qX.push(nx); qY.push(ny);
+                                }
+                            }
+                        }
+                    }
+
+                    const area = (maxX - minX + 1) * (maxY - minY + 1);
+                    if (area >= minRegionArea) {
+                        regions.push({
+                            id: `seg-${regions.length}`,
+                            points: [
+                                { x: minX, y: minY },
+                                { x: maxX, y: maxY }
+                            ],
+                            outlineColor: '#22c55e',
+                            filled: false,
+                            type: 'rectangle',
+                            label: 'segment',
+                            confidence: Math.min(99, Math.round(70 + (sensitivity * 25)))
+                        } as any);
+                    }
+                }
             }
+            
+            progressCallback?.(90, 'Creating preview...');
             
             // Create enhanced preview based on local coordinates
             const previewUrl = this.createEnhancedPreview(canvas, ctx, regions, 1);
