@@ -357,37 +357,52 @@ class SmartObjectDetector {
         // Draw original image
         previewCtx.drawImage(canvas, 0, 0);
         
-        // Draw detections with enhanced styling
-        regions.forEach((region, index) => {
-            const color = region.outlineColor!;
+            // Draw detections with enhanced styling
+            regions.forEach((region, index) => {
+                const color = region.outlineColor || '#22c55e';
+
+                // Support both 2-point ([start,end]) and 4-point rectangles
+                let x1 = region.points[0]?.x ?? 0;
+                let y1 = region.points[0]?.y ?? 0;
+                let x2 = region.points[1]?.x ?? region.points[2]?.x ?? x1;
+                let y2 = region.points[1]?.y ?? region.points[2]?.y ?? y1;
+
+                // If we actually have 4 points, compute min/max to be safe
+                if (region.points.length >= 4) {
+                    const xs = region.points.map(p => p.x);
+                    const ys = region.points.map(p => p.y);
+                    x1 = Math.min(...xs); y1 = Math.min(...ys);
+                    x2 = Math.max(...xs); y2 = Math.max(...ys);
+                }
+
+                const w = x2 - x1;
+                const h = y2 - y1;
+                if (!Number.isFinite(w) || !Number.isFinite(h) || Math.abs(w) < 1 || Math.abs(h) < 1) return;
+                
+                // semi-transparent fill
+                previewCtx.fillStyle = `${color}15`;
+                previewCtx.beginPath();
+                previewCtx.rect(x1, y1, w, h);
+                previewCtx.fill();
+                
+                // border
+                previewCtx.strokeStyle = color;
+                previewCtx.lineWidth = 2;
+                previewCtx.stroke();
+                
+                // label
+                previewCtx.fillStyle = color;
+                previewCtx.font = 'bold 12px Arial';
+                const label = region.label || 'segment';
+                const conf = region.confidence ?? 80;
+                previewCtx.fillText(
+                    `${label} (${conf}%)`,
+                    x1 + 4,
+                    Math.max(12, y1 - 4)
+                );
+            });
             
-            // Draw filled rectangle
-            previewCtx.fillStyle = color + '15';
-            previewCtx.beginPath();
-            previewCtx.rect(
-                region.points[0].x, 
-                region.points[0].y,
-                region.points[2].x - region.points[0].x,
-                region.points[2].y - region.points[0].y
-            );
-            previewCtx.fill();
-            
-            // Draw border
-            previewCtx.strokeStyle = color;
-            previewCtx.lineWidth = 2;
-            previewCtx.stroke();
-            
-            // Draw label
-            previewCtx.fillStyle = color;
-            previewCtx.font = 'bold 12px Arial';
-            previewCtx.fillText(
-                `${region.label} (${region.confidence}%)`,
-                region.points[0].x + 4,
-                region.points[0].y - 4
-            );
-        });
-        
-        return previewCanvas.toDataURL();
+            return previewCanvas.toDataURL();
     }
 }
 
